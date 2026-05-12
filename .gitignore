@@ -33,6 +33,11 @@ yarn-error.log*
 .idea/
 
 # Local models/checkpoints
-nlp-service/models/
+nlp-service/models/*
+!nlp-service/models/.gitkeep
 nlp-service/checkpoints/
 nlp-service/outputs/
+nlp-service/wandb/
+nlp-service/data/raw/
+nlp-service/data/private/
+nlp-service/data/processed/
