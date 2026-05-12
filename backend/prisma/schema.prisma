@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum TicketStatus {
+  IN_PROGRESS
+  SUBMITTED
+}
+
+enum UrgencyLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SentimentLabel {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+model User {
+  id           String            @id @default(uuid())
+  name         String
+  email        String            @unique
+  passwordHash String
+  role         UserRole          @default(CUSTOMER)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  tickets      Ticket[]
+  validations  AdminValidation[] @relation("AdminValidations")
+
+  @@map("users")
+}
+
+model Ticket {
+  id           String              @id @default(uuid())
+  displayId    String              @unique
+  userId       String
+  ticketName   String
+  status       TicketStatus        @default(IN_PROGRESS)
+  sortOrder    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  submittedAt  DateTime?
+  resolvedAt   DateTime?
+  deletedAt    DateTime?
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interactions TicketInteraction[]
+  vectors      TicketVector[]
+
+  @@index([userId, status])
+  @@index([displayId])
+  @@map("tickets")
+}
+
+model TicketInteraction {
+  id            String            @id @default(uuid())
+  ticketId      String
+  stepNumber    Int
+  userText      String
+  modelOutput   Json
+  category      String
+  urgency       UrgencyLevel
+  urgencyColour String
+  sentiment     SentimentLabel
+  department    String
+  keyPhrases    String[]
+  modelName     String
+  modelVersion  String
+  promptVersion String?
+  createdAt     DateTime          @default(now())
+  ticket        Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  validations   AdminValidation[]
+  vector        TicketVector?
+
+  @@unique([ticketId, stepNumber])
+  @@index([category])
+  @@index([urgency])
+  @@index([sentiment])
+  @@index([department])
+  @@map("ticket_interactions")
+}
+
+model AdminValidation {
+  id                  String             @id @default(uuid())
+  interactionId       String
+  adminId             String
+  correctedCategory   String?
+  correctedUrgency    UrgencyLevel?
+  correctedSentiment  SentimentLabel?
+  correctedDepartment String?
+  notes               String?
+  validatedAt         DateTime           @default(now())
+  interaction         TicketInteraction  @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  admin               User               @relation("AdminValidations", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([interactionId])
+  @@index([adminId])
+  @@map("admin_validations")
+}
+
+model TicketVector {
+  id            String            @id
+  ticketId      String
+  interactionId String            @unique
+  clusterId     String?
+  createdAt     DateTime          @default(now())
+  ticket        Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  interaction   TicketInteraction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([clusterId])
+  @@map("ticket_vectors")
+}

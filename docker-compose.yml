@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smart_feedback_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smart_feedback
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smart_feedback"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nlp-service:
+    build:
+      context: ./nlp-service
+    container_name: smart_feedback_nlp
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nlp-service/models:/app/models
+      - hf_cache:/root/.cache/huggingface
+
+  backend:
+    build:
+      context: ./backend
+    container_name: smart_feedback_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nlp-service:
+        condition: service_started
+    command: sh -c "npx prisma db push && npm run start"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: smart_feedback_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  hf_cache:
+  postgres_data:

@@ -1,0 +1,9 @@
+text,category,urgency,sentiment,department
+"I kena charged twice but refund belum masuk",Payment Issue,High,Negative,Finance Department
+"App tak boleh login since yesterday",Account Access,High,Negative,Customer Service Department
+"How can I update my delivery address?",Delivery Issue,Low,Neutral,Logistics Department
+"付款成功了但是订单没有更新",Payment Issue,Medium,Negative,Finance Department
+"Refund still pending lah, already 2 weeks",Payment Issue,High,Negative,Finance Department
+"The app keeps crashing after I open it",Technical Issue,Medium,Negative,Technical Support
+"Thank you, the issue is resolved",General Enquiry,Low,Positive,Customer Service Department
+"My parcel is late and no tracking update",Delivery Issue,Medium,Negative,Logistics Department
