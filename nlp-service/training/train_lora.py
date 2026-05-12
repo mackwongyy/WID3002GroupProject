@@ -26,7 +26,7 @@ OUTPUT_DIR = os.getenv(
     "models/malaysian-feedback-lora",
 )
 
-MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "512"))
+MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "384"))
 NUM_EPOCHS = float(os.getenv("NUM_EPOCHS", "3"))
 LEARNING_RATE = float(os.getenv("LEARNING_RATE", "2e-5"))
 
@@ -67,16 +67,14 @@ def main():
     model.config.use_cache = False
 
     lora_config = LoraConfig(
-        r=8,
-        lora_alpha=16,
+        r=4,
+        lora_alpha=8,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=[
             "q_proj",
-            "k_proj",
             "v_proj",
-            "o_proj",
         ],
     )
 
