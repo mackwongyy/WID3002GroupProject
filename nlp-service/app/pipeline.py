@@ -7,9 +7,13 @@ from app.schemas import AnalyseRequest, AnalyseResponse, Confidence
 
 CATEGORY_TO_DEPARTMENT = {
     "Payment Issue": "Finance Department",
-    "Technical Issue": "Technical Support",
+    "Refund Issue": "Finance Department",
+    "Technical Issue": "Technical Support Department",
     "Delivery Issue": "Logistics Department",
     "Account Access": "Customer Service Department",
+    "Account Issue": "Customer Service Department",
+    "Product Issue": "Product Department",
+    "Service Complaint": "Customer Service Department",
     "General Enquiry": "Customer Service Department",
 }
 
@@ -38,10 +42,17 @@ class NlpPipeline:
         else:
             category_pred = self.classifier.predict_category(text)
             sentiment_pred = self.classifier.predict_sentiment(text)
-            urgency_pred = self.classifier.predict_urgency(text, category_pred.label, sentiment_pred.label)
+            urgency_pred = self.classifier.predict_urgency(
+                text,
+                category_pred.label,
+                sentiment_pred.label,
+            )
             llm_key_phrases = []
 
-        department = CATEGORY_TO_DEPARTMENT.get(category_pred.label, "Customer Service Department")
+        department = CATEGORY_TO_DEPARTMENT.get(
+            category_pred.label,
+            "Customer Service Department",
+        )
         key_phrases = llm_key_phrases or simple_keyphrases(text)
         vector = self.embedding_model.encode(text)
 
@@ -57,16 +68,9 @@ class NlpPipeline:
             department=department,
         )
 
-        classifier_name = self.classifier.__class__.__name__
-        if classifier_name == "DemoClassifier":
-            model_name = "demo-rules"
-            prompt_version = None
-        elif classifier_name == "MalaysianLlamaClassifier":
-            model_name = "mesolitica/Malaysian-Llama-3.2-3B-Instruct"
-            prompt_version = "malaysian-feedback-json-v1"
-        else:
-            model_name = "huggingface-sequence-classifiers"
-            prompt_version = None
+        model_name = getattr(self.classifier, "model_name", "unknown")
+        model_version = getattr(self.classifier, "model_version", "0.2.0")
+        prompt_version = getattr(self.classifier, "prompt_version", None)
 
         return AnalyseResponse(
             category=category_pred.label,
@@ -82,7 +86,7 @@ class NlpPipeline:
             ),
             similar_tickets=similar_tickets,
             model_name=model_name,
-            model_version="0.2.0",
+            model_version=model_version,
             prompt_version=prompt_version,
             vector_id=vector_id,
             cluster_id=cluster_id,
