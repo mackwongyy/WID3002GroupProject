@@ -26,7 +26,7 @@ OUTPUT_DIR = os.getenv(
     "models/malaysian-feedback-lora",
 )
 
-MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "384"))
+MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "512"))
 NUM_EPOCHS = float(os.getenv("NUM_EPOCHS", "3"))
 LEARNING_RATE = float(os.getenv("LEARNING_RATE", "2e-5"))
 
