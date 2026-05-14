@@ -100,7 +100,7 @@ class DemoClassifier:
 class MalaysianLlamaClassifier:
     def __init__(self) -> None:
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
         self.model_name = settings.llm_model_name
         self.model_version = "base-llama-v1"
@@ -114,12 +114,21 @@ class MalaysianLlamaClassifier:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+
         self.model = AutoModelForCausalLM.from_pretrained(
             settings.llm_model_name,
+            quantization_config=quant_config,
+            device_map={"": 0},
             torch_dtype=torch.float16,
-            device_map="auto",
             trust_remote_code=True,
         )
+
         self.model.eval()
 
     def analyse(self, text: str) -> StructuredLlmOutput:
@@ -202,11 +211,12 @@ class MalaysianLlamaLoraClassifier(MalaysianLlamaClassifier):
             self.model,
             settings.llm_adapter_path,
         )
+
         self.model.eval()
 
         self.model_name = f"{settings.llm_model_name}+{settings.llm_adapter_path}"
-        self.model_version = "lora-adapter-v1"
-        self.prompt_version = "malaysian-feedback-json-lora-v1"
+        self.model_version = "lora-adapter-5k-v1"
+        self.prompt_version = "malaysian-feedback-json-lora-5k-v1"
 
 
 class EmbeddingModel:
