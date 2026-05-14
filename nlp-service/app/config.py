@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     llm_adapter_path: str | None = None
     llm_device: str = "auto"
     llm_torch_dtype: str = "auto"
-    llm_max_input_tokens: int = 2048
-    llm_max_new_tokens: int = 256
+    llm_max_input_tokens: int = 1024
+    llm_max_new_tokens: int = 128
     llm_temperature: float = 0.0
 
     embedding_model_name: str = "BAAI/bge-m3"
