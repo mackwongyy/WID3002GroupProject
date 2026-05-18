@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import settings
-
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 @dataclass
 class Prediction:
@@ -114,19 +114,12 @@ class MalaysianLlamaClassifier:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        quant_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.float16,
-        )
-
         self.model = AutoModelForCausalLM.from_pretrained(
             settings.llm_model_name,
-            quantization_config=quant_config,
-            device_map={"": 0},
             torch_dtype=torch.float16,
+            device_map={"": 0},
             trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
 
         self.model.eval()
