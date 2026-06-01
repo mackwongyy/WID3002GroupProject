@@ -66,7 +66,7 @@ adminRouter.patch("/interactions/:interactionId/validate", async (req, res, next
   try {
     const input = ValidationSchema.parse(req.body);
     const validation = await adminService.validateInteraction(req.user!.id, req.params.interactionId, input);
-    res.status(201).json({ validation });
+    res.status(200).json(validation);
   } catch (error) {
     next(error);
   }

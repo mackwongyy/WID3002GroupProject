@@ -24,6 +24,18 @@ function countPhrases(phraseGroups: string[][]) {
     .slice(0, 15);
 }
 
+function buildValidationSummary(interactions: Array<{ id: string; validations?: unknown[] }>) {
+  const totalInteractions = interactions.length;
+  const validatedInteractions = interactions.filter((interaction) => (interaction.validations?.length ?? 0) > 0).length;
+
+  return {
+    total_interactions: totalInteractions,
+    validated_interactions: validatedInteractions,
+    pending_interactions: totalInteractions - validatedInteractions,
+    validation_records: interactions.reduce((sum, interaction) => sum + (interaction.validations?.length ?? 0), 0)
+  };
+}
+
 export async function getSummary() {
   const [totalTickets, statusGroups, departmentGroups, interactions] = await Promise.all([
     prisma.ticket.count({ where: { deletedAt: null } }),
@@ -38,6 +50,7 @@ export async function getSummary() {
     }),
     prisma.ticketInteraction.findMany({
       select: {
+        id: true,
         category: true,
         urgency: true,
         sentiment: true,
@@ -45,6 +58,7 @@ export async function getSummary() {
         keyPhrases: true,
         ticketId: true,
         stepNumber: true,
+        validations: { select: { id: true } },
         ticket: { select: { status: true } }
       }
     })
@@ -78,7 +92,8 @@ export async function getSummary() {
     category_breakdown: categoryBreakdown,
     urgency_breakdown: urgencyBreakdown,
     sentiment_breakdown: sentimentBreakdown,
-    top_key_phrases: countPhrases(interactions.map((i) => i.keyPhrases))
+    top_key_phrases: countPhrases(interactions.map((i) => i.keyPhrases)),
+    validation_summary: buildValidationSummary(interactions)
   };
 }
 
@@ -109,7 +124,13 @@ export async function listTickets(filters: {
       user: { select: { id: true, name: true, email: true } },
       interactions: {
         orderBy: { createdAt: "desc" },
-        take: 1
+        take: 1,
+        include: {
+          validations: {
+            include: { admin: { select: { id: true, name: true, email: true } } },
+            orderBy: { validatedAt: "desc" }
+          }
+        }
       },
       _count: { select: { interactions: true } }
     },
@@ -158,11 +179,13 @@ export async function getUserAnalytics(userId: string) {
     prisma.ticketInteraction.findMany({
       where: { ticket: { userId, deletedAt: null } },
       select: {
+        id: true,
         category: true,
         urgency: true,
         sentiment: true,
         department: true,
-        keyPhrases: true
+        keyPhrases: true,
+        validations: { select: { id: true } }
       }
     })
   ]);
@@ -174,6 +197,7 @@ export async function getUserAnalytics(userId: string) {
       in_progress: tickets.filter((t) => t.status === TicketStatus.IN_PROGRESS).length,
       submitted: tickets.filter((t) => t.status === TicketStatus.SUBMITTED).length
     },
+    validation_summary: buildValidationSummary(interactions),
     category_breakdown: countBy(interactions.map((i) => i.category)),
     urgency_breakdown: countBy(interactions.map((i) => i.urgency)),
     sentiment_breakdown: countBy(interactions.map((i) => i.sentiment)),
@@ -220,20 +244,50 @@ export async function validateInteraction(
     notes?: string;
   }
 ) {
-  const interaction = await prisma.ticketInteraction.findUnique({ where: { id: interactionId } });
-  if (!interaction) {
+  const interaction = await prisma.ticketInteraction.findUnique({
+    where: { id: interactionId },
+    include: {
+      ticket: { select: { id: true, displayId: true, ticketName: true, userId: true, deletedAt: true } }
+    }
+  });
+
+  if (!interaction || interaction.ticket.deletedAt) {
     throw new HttpError(404, "INTERACTION_NOT_FOUND", "Interaction was not found.");
   }
 
-  return prisma.adminValidation.create({
-    data: {
-      interactionId,
-      adminId,
-      correctedCategory: input.corrected_category ?? null,
-      correctedUrgency: input.corrected_urgency ?? null,
-      correctedSentiment: input.corrected_sentiment ?? null,
-      correctedDepartment: input.corrected_department ?? null,
-      notes: input.notes ?? null
-    }
+  const validationData = {
+    correctedCategory: input.corrected_category ?? null,
+    correctedUrgency: input.corrected_urgency ?? null,
+    correctedSentiment: input.corrected_sentiment ?? null,
+    correctedDepartment: input.corrected_department ?? null,
+    notes: input.notes ?? "Validated from admin dashboard.",
+    validatedAt: new Date()
+  };
+
+  const existingValidation = await prisma.adminValidation.findFirst({
+    where: { interactionId, adminId }
   });
+
+  const validation = existingValidation
+    ? await prisma.adminValidation.update({
+        where: { id: existingValidation.id },
+        data: validationData,
+        include: { admin: { select: { id: true, name: true, email: true } } }
+      })
+    : await prisma.adminValidation.create({
+        data: {
+          interactionId,
+          adminId,
+          ...validationData
+        },
+        include: { admin: { select: { id: true, name: true, email: true } } }
+      });
+
+  return {
+    validation,
+    interaction_id: interactionId,
+    ticket_id: interaction.ticketId,
+    is_validated: true,
+    validated_at: validation.validatedAt
+  };
 }

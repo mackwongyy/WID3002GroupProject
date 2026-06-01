@@ -204,6 +204,74 @@ Once a ticket is submitted, the user cannot add more chat messages. However, the
 - Review full ticket history
 - Validate or correct model outputs
 
+
+## Admin Validation Persistence and Dashboard Updates
+
+The admin dashboard includes a backend-persisted human validation workflow for model outputs. This supports human-in-the-loop review of ticket interactions and makes each admin validation auditable.
+
+### Backend validation flow
+
+The validation endpoint is:
+
+```http
+PATCH /api/admin/interactions/:interactionId/validate
+```
+
+When an admin validates an interaction, the backend writes the result to the `admin_validations` table. If the same admin validates the same interaction again, the existing validation row is updated instead of creating duplicate rows.
+
+The response includes:
+
+- `validation`
+- `interaction_id`
+- `ticket_id`
+- `is_validated`
+- `validated_at`
+
+The admin summary API also includes a `validation_summary` with:
+
+- `total_interactions`
+- `validated_interactions`
+- `pending_interactions`
+- `validation_records`
+
+User-level admin analytics also include per-user validation coverage, and ticket listings include the latest interaction validation status.
+
+### Admin dashboard layout
+
+The main admin dashboard is organised into clearer sections:
+
+- Snapshot
+- Model Output Analytics
+- Users
+- Latest Tickets
+
+The user-level admin analytics page is organised into:
+
+- User Snapshot
+- User-level Model Analytics
+- Tickets
+- Ticket History & Validation
+
+Each interaction shows whether it is still pending review or already validated, along with the validating admin, validation timestamp, and validation notes where available.
+
+### Mark as Validated behaviour
+
+The `Mark as Validated` button now:
+
+- calls the backend validation API
+- persists the validation result in PostgreSQL
+- shows a loading state while the request is in progress
+- refreshes ticket history and user analytics after saving
+- changes to a disabled `Validated` state once saved
+
+No Prisma migration is required for this feature because the project already includes the `AdminValidation` model/table.
+
+To verify persistence directly in PostgreSQL, run:
+
+```sql
+SELECT * FROM admin_validations ORDER BY "validatedAt" DESC LIMIT 10;
+```
+
 ## Documentation
 
 - `docs/ARCHITECTURE.md`
