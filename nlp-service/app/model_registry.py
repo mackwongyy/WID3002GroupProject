@@ -1,398 +1,368 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
-
 from app.config import settings
-
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 @dataclass
 class Prediction:
     label: str
-    confidence: float
+    confidence: float = 0.0
 
 
 @dataclass
-class StructuredLlmPrediction:
+class StructuredLlmOutput:
     category: Prediction
     urgency: Prediction
     sentiment: Prediction
     key_phrases: list[str]
+    department: str
 
 
 class DemoClassifier:
-    """Deterministic fallback classifier for local demos and marking."""
+    model_name = "demo-rules"
+    model_version = "demo-v1"
+    prompt_version = "demo-rules-v1"
 
     def predict_category(self, text: str) -> Prediction:
-        t = text.lower()
-        if any(k in t for k in ["refund", "charged", "payment", "duit", "付款", "bayar", "transaction"]):
-            return Prediction("Payment Issue", 0.88)
-        if any(k in t for k in ["login", "password", "account", "cannot access", "tak boleh masuk", "locked"]):
-            return Prediction("Account Access", 0.84)
-        if any(k in t for k in ["delivery", "parcel", "shipment", "order", "late", "alamat"]):
-            return Prediction("Delivery Issue", 0.81)
-        if any(k in t for k in ["bug", "error", "crash", "app", "system", "technical"]):
-            return Prediction("Technical Issue", 0.82)
-        return Prediction("General Enquiry", 0.69)
+        lower = text.lower()
 
-    def predict_urgency(self, text: str, category: str, sentiment: str) -> Prediction:
-        t = text.lower()
-        high_keywords = [
-            "urgent",
-            "immediately",
-            "asap",
-            "cannot access",
-            "charged twice",
-            "double charged",
-            "fraud",
-            "scam",
-            "account locked",
-        ]
-        medium_keywords = ["pending", "delay", "belum", "still", "not yet", "failed", "gagal"]
-        if any(k in t for k in high_keywords) or (category in {"Payment Issue", "Account Access"} and sentiment == "Negative"):
-            return Prediction("High", 0.84)
-        if any(k in t for k in medium_keywords):
-            return Prediction("Medium", 0.75)
-        return Prediction("Low", 0.72)
+        if any(k in lower for k in ["投诉", "投訴", "complaint", "complain", "attitude", "态度", "態度", "rude"]):
+            return Prediction("Service Complaint", 0.85)
+
+        if any(k in lower for k in ["refund", "退款", "charged", "扣钱", "扣錢", "扣了", "payment", "付款", "bayar"]):
+            return Prediction("Payment Issue", 0.85)
+
+        if any(k in lower for k in ["login", "otp", "crash", "error", "bug", "cannot access", "app"]):
+            return Prediction("Technical Issue", 0.80)
+
+        if any(k in lower for k in ["delivery", "parcel", "包裹", "地址", "rider", "delivered"]):
+            return Prediction("Delivery Issue", 0.80)
+
+        if any(k in lower for k in ["product", "item", "商品", "产品", "產品", "faulty", "rosak"]):
+            return Prediction("Product Issue", 0.80)
+
+        return Prediction("General Enquiry", 0.65)
 
     def predict_sentiment(self, text: str) -> Prediction:
-        t = text.lower()
-        negative = [
-        # English
-        "angry",
-        "bad",
-        "terrible",
-        "frustrated",
-        "not received",
-        "failed",
-        "cannot",
-        "problem",
-        "issue",
+        lower = text.lower()
 
-        # Malay / Malaysian Malay
-        "marah",
-        "sangat marah",
-        "geram",
-        "kecewa",
-        "tak puas hati",
-        "tidak puas hati",
-        "teruk",
-        "buruk",
-        "tak boleh",
-        "gagal",
-        "masalah",
-        "lambat",
-        "belum dapat",
-        "belum terima",
-
-        # Manglish / common local expressions
-        "cannot lah",
-        "so bad",
-        "very bad",
-        "kena charge",
-        "kena charged",
+        negative_markers = [
+            "angry", "bad", "terrible", "complaint", "complain", "not good",
+            "marah", "sangat marah", "geram", "kecewa", "tak puas hati",
+            "投诉", "投訴", "生气", "生氣", "不爽", "不满意", "不滿意",
+            "很差", "太差", "不好", "很不好", "态度不好", "態度不好",
+            "态度很不好", "態度很不好", "糟糕", "离谱", "離譜",
+            "aiyo", "walao", "sien", "pekcek", "beh tahan", "jialat",
         ]
-        positive = [
-        "thanks",
-        "thank you",
-        "good",
-        "great",
-        "resolved",
-        "helpful",
-        "terima kasih",
-        "bagus",
-        "baik",
-        "puas hati",]
-        if any(k in t for k in negative):
-            return Prediction("Negative", 0.86)
-        if any(k in t for k in positive):
-            return Prediction("Positive", 0.78)
-        return Prediction("Neutral", 0.68)
 
+        positive_markers = [
+            "thanks", "thank you", "good", "great", "resolved", "helpful",
+            "terima kasih", "bagus", "baik",
+            "谢谢", "謝謝", "不错", "不錯", "很好", "满意", "滿意",
+        ]
 
-class HuggingFaceSequenceClassifier:
-    """Optional wrapper around fine-tuned HuggingFace sequence-classification models.
+        if any(k in lower for k in negative_markers):
+            return Prediction("Negative", 0.90)
 
-    This is kept for teams that later want to compare the Llama prompt-based pipeline
-    with smaller supervised classifiers. It is no longer the primary production path.
-    """
+        if any(k in lower for k in positive_markers):
+            return Prediction("Positive", 0.85)
 
-    def __init__(self) -> None:
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
-
-        self.category_pipe: Any | None = None
-        self.urgency_pipe: Any | None = None
-        self.sentiment_pipe: Any | None = None
-
-        model_paths = {
-            "category": settings.category_model_path,
-            "urgency": settings.urgency_model_path,
-            "sentiment": settings.sentiment_model_path,
-        }
-
-        for task, path in model_paths.items():
-            if os.path.exists(path):
-                tokenizer = AutoTokenizer.from_pretrained(path)
-                model = AutoModelForSequenceClassification.from_pretrained(path)
-                setattr(self, f"{task}_pipe", pipeline("text-classification", model=model, tokenizer=tokenizer))
-
-        self.fallback = DemoClassifier()
-
-    @staticmethod
-    def _predict(pipe: Any, text: str) -> Prediction:
-        result = pipe(text, truncation=True, max_length=256)[0]
-        return Prediction(label=str(result["label"]), confidence=float(result["score"]))
-
-    def predict_category(self, text: str) -> Prediction:
-        return self._predict(self.category_pipe, text) if self.category_pipe else self.fallback.predict_category(text)
+        return Prediction("Neutral", 0.65)
 
     def predict_urgency(self, text: str, category: str, sentiment: str) -> Prediction:
-        return self._predict(self.urgency_pipe, text) if self.urgency_pipe else self.fallback.predict_urgency(text, category, sentiment)
+        lower = text.lower()
 
-    def predict_sentiment(self, text: str) -> Prediction:
-        return self._predict(self.sentiment_pipe, text) if self.sentiment_pipe else self.fallback.predict_sentiment(text)
+        high_markers = [
+            "urgent", "very urgent", "cannot login", "cannot access",
+            "otp", "account locked", "charged twice", "扣了两次", "扣了兩次",
+            "missing parcel", "did not receive", "没有收到", "沒有收到",
+        ]
+
+        medium_markers = [
+            "投诉", "投訴", "complaint", "态度不好", "態度不好",
+            "很不好", "marah", "angry", "refund", "退款",
+        ]
+
+        if any(k in lower for k in high_markers):
+            return Prediction("High", 0.85)
+
+        if sentiment == "Negative" or any(k in lower for k in medium_markers):
+            return Prediction("Medium", 0.80)
+
+        return Prediction("Low", 0.70)
 
 
 class MalaysianLlamaClassifier:
-    """Prompt-based structured classifier using mesolitica/Malaysian-Llama-3.2-3B-Instruct.
-
-    The model is a causal instruction model, not a sequence-classification head. For this
-    project, it is used with a strict JSON prompt so the backend still receives a stable,
-    auditable model output schema.
-    """
-
-    allowed_categories = ["Payment Issue", "Technical Issue", "Delivery Issue", "Account Access", "General Enquiry"]
-    allowed_urgencies = ["Low", "Medium", "High"]
-    allowed_sentiments = ["Positive", "Neutral", "Negative"]
-
     def __init__(self) -> None:
-        self.fallback = DemoClassifier()
-        self.model: Any | None = None
-        self.tokenizer: Any | None = None
-        self.device = "cpu"
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-        try:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+        self.model_name = settings.llm_model_name
+        self.model_version = "base-llama-v1"
+        self.prompt_version = "malaysian-feedback-json-v1"
 
-            requested_device = settings.llm_device.lower()
-            if requested_device != "auto":
-                self.device = requested_device
-            elif torch.cuda.is_available():
-                self.device = "cuda"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                self.device = "mps"
-            else:
-                self.device = "cpu"
-
-            dtype = torch.float32
-            if self.device == "cuda" and settings.llm_torch_dtype in {"auto", "bfloat16"}:
-                dtype = torch.bfloat16
-            elif self.device in {"cuda", "mps"} and settings.llm_torch_dtype in {"auto", "float16"}:
-                dtype = torch.float16
-
-            self.tokenizer = AutoTokenizer.from_pretrained(settings.llm_model_name, trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                settings.llm_model_name,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-            )
-            self.model.to(self.device)
-            self.model.eval()
-
-            if self.tokenizer.pad_token_id is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-        except Exception as exc:  # pragma: no cover - model download/runtime safety
-            print(f"Malaysian Llama unavailable; using deterministic fallback. Reason: {exc}")
-            self.model = None
-            self.tokenizer = None
-
-    def analyse(self, text: str) -> StructuredLlmPrediction:
-        if self.model is None or self.tokenizer is None:
-            category = self.fallback.predict_category(text)
-            sentiment = self.fallback.predict_sentiment(text)
-            urgency = self.fallback.predict_urgency(text, category.label, sentiment.label)
-            return StructuredLlmPrediction(category=category, urgency=urgency, sentiment=sentiment, key_phrases=[])
-
-        prompt = self._build_prompt(text)
-        raw_output = self._generate(prompt)
-        parsed = self._parse_json(raw_output)
-
-        category = self._coerce_prediction(
-            parsed,
-            key="category",
-            confidence_key="category_confidence",
-            allowed=self.allowed_categories,
-            fallback=self.fallback.predict_category(text),
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            settings.llm_model_name,
+            trust_remote_code=True,
         )
-        sentiment = self._coerce_prediction(
-            parsed,
-            key="sentiment",
-            confidence_key="sentiment_confidence",
-            allowed=self.allowed_sentiments,
-            fallback=self.fallback.predict_sentiment(text),
+
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            settings.llm_model_name,
+            torch_dtype=torch.float16,
+            device_map={"": 0},
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
-        urgency = self._coerce_prediction(
-            parsed,
-            key="urgency",
-            confidence_key="urgency_confidence",
-            allowed=self.allowed_urgencies,
-            fallback=self.fallback.predict_urgency(text, category.label, sentiment.label),
-        )
-        key_phrases = parsed.get("key_phrases", []) if isinstance(parsed, dict) else []
-        key_phrases = [str(phrase).strip() for phrase in key_phrases if str(phrase).strip()][:6]
 
-        return StructuredLlmPrediction(category=category, urgency=urgency, sentiment=sentiment, key_phrases=key_phrases)
+        self.model.eval()
 
-    def predict_category(self, text: str) -> Prediction:
-        return self.analyse(text).category
+    def analyse(self, text: str) -> StructuredLlmOutput:
+        return self._analyse_with_model(text)
 
-    def predict_urgency(self, text: str, category: str, sentiment: str) -> Prediction:
-        return self.analyse(text).urgency
-
-    def predict_sentiment(self, text: str) -> Prediction:
-        return self.analyse(text).sentiment
-
-    def _build_prompt(self, text: str) -> str:
-        system_message = (
-            "You are an NLP classifier for a Malaysian customer feedback ticketing system. "
-            "Classify multilingual or code-mixed feedback, including Malaysian English, Malay, Mandarin, Tamil, Manglish, "
-            "and common Malaysian expressions. Return only valid JSON. Do not add explanations outside JSON."
-        )
-        user_message = f"""
-Classify the customer feedback below.
-
-Allowed categories: {self.allowed_categories}
-Allowed urgency levels: {self.allowed_urgencies}
-Allowed sentiments: {self.allowed_sentiments}
-
-Return exactly this JSON schema:
-{{
-  "category": "one allowed category",
-  "category_confidence": 0.0,
-  "urgency": "Low|Medium|High",
-  "urgency_confidence": 0.0,
-  "sentiment": "Positive|Neutral|Negative",
-  "sentiment_confidence": 0.0,
-  "key_phrases": ["phrase 1", "phrase 2"]
-}}
-
-Customer feedback:
-{text}
-""".strip()
-
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message},
-        ]
-        try:
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        except Exception:
-            return f"{system_message}\n\n{user_message}\n\nJSON:"
-
-    def _generate(self, prompt: str) -> str:
+    def _analyse_with_model(self, text: str) -> StructuredLlmOutput:
         import torch
 
-        encoded = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=settings.llm_max_input_tokens)
-        encoded = {key: value.to(self.device) for key, value in encoded.items()}
+        system_prompt = (
+            "You are an NLP classifier for a Malaysian customer feedback system. "
+            "Return only valid JSON with exactly these fields: "
+            "category, urgency, sentiment, key_phrases, department. "
+            "Use category from: Payment Issue, Technical Issue, Account Issue, "
+            "Delivery Issue, Refund Issue, Product Issue, Service Complaint, General Enquiry. "
+            "Use urgency from: Low, Medium, High. "
+            "Use sentiment from: Positive, Neutral, Negative. "
+            "For complaints, anger, bad attitude, rude service, dissatisfaction, or words like "
+            "投诉, 生气, 不满意, 态度不好, marah, angry, classify sentiment as Negative."
+        )
 
-        generation_kwargs = {
-            "max_new_tokens": settings.llm_max_new_tokens,
-            "do_sample": settings.llm_temperature > 0,
-            "pad_token_id": self.tokenizer.pad_token_id,
-            "eos_token_id": self.tokenizer.eos_token_id,
-        }
-        if settings.llm_temperature > 0:
-            generation_kwargs["temperature"] = settings.llm_temperature
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ]
+
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=settings.llm_max_input_tokens,
+        )
+
+        device = next(self.model.parameters()).device
+        inputs = {key: value.to(device) for key, value in inputs.items()}
 
         with torch.no_grad():
-            output_ids = self.model.generate(**encoded, **generation_kwargs)
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=settings.llm_max_new_tokens,
+                temperature=settings.llm_temperature,
+                do_sample=False,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
 
-        generated_ids = output_ids[0][encoded["input_ids"].shape[-1] :]
-        return self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        generated = self.tokenizer.decode(
+            outputs[0][inputs["input_ids"].shape[-1]:],
+            skip_special_tokens=True,
+        ).strip()
 
-    @staticmethod
-    def _parse_json(raw_output: str) -> dict[str, Any]:
-        try:
-            return json.loads(raw_output)
-        except json.JSONDecodeError:
-            pass
+        parsed = parse_json_output(generated)
+        parsed = normalise_model_output(parsed, text)
 
-        match = re.search(r"\{.*\}", raw_output, flags=re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return {}
-        return {}
+        return StructuredLlmOutput(
+            category=Prediction(parsed["category"], 0.80),
+            urgency=Prediction(parsed["urgency"], 0.80),
+            sentiment=Prediction(parsed["sentiment"], 0.80),
+            key_phrases=parsed["key_phrases"],
+            department=parsed["department"],
+        )
 
-    @staticmethod
-    def _coerce_prediction(
-        parsed: dict[str, Any],
-        *,
-        key: str,
-        confidence_key: str,
-        allowed: list[str],
-        fallback: Prediction,
-    ) -> Prediction:
-        label = str(parsed.get(key, "")).strip()
-        if label not in allowed:
-            return fallback
-        raw_confidence = parsed.get(confidence_key, fallback.confidence)
-        try:
-            confidence = float(raw_confidence)
-        except (TypeError, ValueError):
-            confidence = fallback.confidence
-        confidence = max(0.0, min(1.0, confidence))
-        return Prediction(label=label, confidence=confidence)
+
+class MalaysianLlamaLoraClassifier(MalaysianLlamaClassifier):
+    def __init__(self) -> None:
+        super().__init__()
+
+        if not settings.llm_adapter_path:
+            raise ValueError(
+                "LLM_ADAPTER_PATH is required when NLP_MODE=malaysian-llama-lora"
+            )
+
+        from peft import PeftModel
+
+        self.model = PeftModel.from_pretrained(
+            self.model,
+            settings.llm_adapter_path,
+        )
+
+        self.model.eval()
+
+        self.model_name = f"{settings.llm_model_name}+{settings.llm_adapter_path}"
+        self.model_version = "lora-adapter-5k-v1"
+        self.prompt_version = "malaysian-feedback-json-lora-5k-v1"
 
 
 class EmbeddingModel:
     def __init__(self) -> None:
-        self.mode = settings.nlp_mode.lower()
-        self.model: Any | None = None
-        if self.mode in {"huggingface", "sequence", "sequence-classifier", "llama", "malaysian-llama"}:
-            try:
-                from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer
 
-                self.model = SentenceTransformer(settings.embedding_model_name)
-            except Exception as exc:  # pragma: no cover - fallback for lightweight environments
-                print(f"Embedding model unavailable; using deterministic fallback. Reason: {exc}")
-                self.model = None
+        self.model_name = settings.embedding_model_name
+        self.model = SentenceTransformer(self.model_name)
 
     def encode(self, text: str) -> list[float]:
-        if self.model is not None:
-            vector = self.model.encode(text, normalize_embeddings=True)
-            return vector.tolist()
-
-        return self._deterministic_embedding(text, settings.embedding_dimension)
-
-    @staticmethod
-    def _deterministic_embedding(text: str, dimension: int) -> list[float]:
-        seed = int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16)
-        rng = np.random.default_rng(seed)
-        vector = rng.normal(0, 1, dimension)
-        norm = np.linalg.norm(vector)
-        if norm == 0:
-            return vector.tolist()
-        return (vector / norm).tolist()
+        vector = self.model.encode(text, normalize_embeddings=True)
+        return vector.tolist()
 
 
-ClassifierType = DemoClassifier | HuggingFaceSequenceClassifier | MalaysianLlamaClassifier
+def parse_json_output(raw: str) -> dict[str, Any]:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+    return {
+        "category": "General Enquiry",
+        "urgency": "Low",
+        "sentiment": "Neutral",
+        "key_phrases": [],
+        "department": "Customer Service Department",
+        "raw_output": raw,
+    }
 
 
-def get_classifier() -> ClassifierType:
-    mode = settings.nlp_mode.lower()
-    if mode in {"llama", "malaysian-llama", "huggingface"}:
+def normalise_model_output(result: dict[str, Any], text: str) -> dict[str, Any]:
+    allowed_categories = {
+        "Payment Issue",
+        "Technical Issue",
+        "Account Issue",
+        "Account Access",
+        "Delivery Issue",
+        "Refund Issue",
+        "Product Issue",
+        "Service Complaint",
+        "General Enquiry",
+    }
+
+    allowed_urgency = {"Low", "Medium", "High"}
+    allowed_sentiment = {"Positive", "Neutral", "Negative"}
+
+    category = result.get("category", "General Enquiry")
+    urgency = result.get("urgency", "Low")
+    sentiment = result.get("sentiment", "Neutral")
+    department = result.get("department", "Customer Service Department")
+    key_phrases = result.get("key_phrases", extract_key_phrases(text))
+
+    if category not in allowed_categories:
+        category = "General Enquiry"
+
+    if urgency not in allowed_urgency:
+        urgency = "Low"
+
+    if sentiment not in allowed_sentiment:
+        sentiment = "Neutral"
+
+    if not isinstance(key_phrases, list):
+        key_phrases = extract_key_phrases(text)
+
+    output = {
+        "category": category,
+        "urgency": urgency,
+        "sentiment": sentiment,
+        "department": department,
+        "key_phrases": key_phrases,
+        "urgency_colour": {
+            "High": "Red",
+            "Medium": "Orange",
+            "Low": "Yellow",
+        }[urgency],
+    }
+
+    return apply_guardrails(text, output)
+
+
+def apply_guardrails(text: str, result: dict[str, Any]) -> dict[str, Any]:
+    lower = text.lower()
+
+    negative_markers = [
+        "投诉", "投訴", "生气", "生氣", "很生气", "很生氣",
+        "不爽", "不满意", "不滿意", "态度不好", "態度不好",
+        "态度很不好", "態度很不好", "很不好", "很差", "太差",
+        "angry", "complain", "complaint", "rude",
+        "marah", "sangat marah", "geram", "kecewa",
+        "tak puas hati", "pekcek", "beh tahan", "jialat",
+    ]
+
+    service_markers = [
+        "投诉", "投訴", "态度", "態度", "driver", "staff",
+        "rude", "service", "客服", "服务", "服務",
+    ]
+
+    if any(marker in lower for marker in negative_markers):
+        result["sentiment"] = "Negative"
+        if result.get("urgency") == "Low":
+            result["urgency"] = "Medium"
+            result["urgency_colour"] = "Orange"
+
+    if any(marker in lower for marker in service_markers):
+        if result.get("category") == "General Enquiry":
+            result["category"] = "Service Complaint"
+            result["department"] = "Customer Service Department"
+
+    return result
+
+
+def extract_key_phrases(text: str) -> list[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return []
+
+    phrases: list[str] = []
+    known_phrases = [
+        "投诉", "投訴", "态度很不好", "態度很不好",
+        "态度不好", "態度不好", "driver", "refund",
+        "payment", "login", "OTP", "crash",
+        "marah", "angry", "charged twice",
+    ]
+
+    lower = cleaned.lower()
+    for phrase in known_phrases:
+        if phrase.lower() in lower:
+            phrases.append(phrase)
+
+    if not phrases:
+        words = cleaned.split()
+        phrases = words[:4] if words else [cleaned[:20]]
+
+    return list(dict.fromkeys(phrases))
+
+
+def get_classifier():
+    mode = settings.nlp_mode.lower().strip()
+
+    if mode == "demo":
+        return DemoClassifier()
+
+    if mode in {"malaysian-llama-lora", "llama-lora", "lora"}:
+        return MalaysianLlamaLoraClassifier()
+
+    if mode in {"malaysian-llama", "llama"}:
         return MalaysianLlamaClassifier()
-    if mode in {"sequence", "sequence-classifier"}:
-        return HuggingFaceSequenceClassifier()
+
     return DemoClassifier()
 
 
