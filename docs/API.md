@@ -249,3 +249,51 @@ Response:
   "similar_tickets": []
 }
 ```
+
+
+## Admin Analysis Retry
+
+### POST `/api/admin/interactions/:interactionId/reanalyse`
+
+Retries NLP analysis for an existing ticket interaction. This is useful when the NLP service was temporarily unavailable and the interaction was saved with `analysisStatus = FAILED`.
+
+Authentication: Admin only.
+
+Response:
+
+```json
+{
+  "analysis_status": "SUCCESS",
+  "interaction": {
+    "id": "...",
+    "analysisStatus": "SUCCESS",
+    "analysisError": null
+  }
+}
+```
+
+If retry fails, the response still returns the interaction and stores the failure in `analysis_runs`:
+
+```json
+{
+  "analysis_status": "FAILED",
+  "error": "Unable to reach NLP service..."
+}
+```
+
+## Backend Health Check
+
+### GET `/api/health`
+
+Returns backend dependency health for PostgreSQL and NLP service.
+
+```json
+{
+  "status": "ok",
+  "service": "backend",
+  "checks": {
+    "database": { "status": "ok", "latency_ms": 4 },
+    "nlp_service": { "status": "ok", "latency_ms": 12 }
+  }
+}
+```

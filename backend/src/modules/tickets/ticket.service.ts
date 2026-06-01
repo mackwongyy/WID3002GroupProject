@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { Prisma, SentimentLabel, TicketStatus, UrgencyLevel } from "@prisma/client";
+import { AnalysisStatus, Prisma, SentimentLabel, TicketStatus, UrgencyLevel } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../utils/http.js";
-import { analyseText } from "../nlp/nlp.client.js";
+import { analyseText, type NlpAnalysisResponse } from "../nlp/nlp.client.js";
 
 function toUrgencyEnum(value: string): UrgencyLevel {
   const normalized = value.toUpperCase();
@@ -16,6 +16,35 @@ function toSentimentEnum(value: string): SentimentLabel {
   if (normalized === "POSITIVE") return SentimentLabel.POSITIVE;
   if (normalized === "NEGATIVE") return SentimentLabel.NEGATIVE;
   return SentimentLabel.NEUTRAL;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return "Unknown NLP analysis error.";
+}
+
+function buildFallbackAnalysis(error: unknown): NlpAnalysisResponse {
+  return {
+    category: "General Enquiry",
+    urgency: "Low",
+    urgency_colour: "Yellow",
+    sentiment: "Neutral",
+    key_phrases: [],
+    department: "Customer Service Department",
+    confidence: {
+      category: 0,
+      urgency: 0,
+      sentiment: 0
+    },
+    similar_tickets: [],
+    model_name: "analysis-failed-fallback",
+    model_version: "0.0.0",
+    prompt_version: "backend-fallback-v1",
+    vector_id: null,
+    cluster_id: null,
+    // Keep the failure reason in the JSON audit trail while still matching the NLP response shape used by the frontend.
+    error: errorMessage(error)
+  } as NlpAnalysisResponse & { error: string };
 }
 
 async function generateDisplayId() {
@@ -115,6 +144,10 @@ export async function listInteractions(userId: string, ticketId: string) {
       validations: {
         orderBy: { validatedAt: "desc" },
         take: 1
+      },
+      analysisRuns: {
+        orderBy: { startedAt: "desc" },
+        take: 3
       }
     }
   });
@@ -133,12 +166,25 @@ export async function addMessage(userId: string, ticketId: string, text: string)
   });
   const stepNumber = (latest._max.stepNumber ?? 0) + 1;
 
-  const analysis = await analyseText({
-    interaction_id: interactionId,
-    ticket_id: ticketId,
-    user_id: userId,
-    text
-  });
+  let analysis: NlpAnalysisResponse;
+  let analysisStatus = AnalysisStatus.SUCCESS;
+  let analysisError: string | null = null;
+
+  try {
+    analysis = await analyseText({
+      interaction_id: interactionId,
+      ticket_id: ticketId,
+      user_id: userId,
+      text
+    });
+  } catch (error) {
+    analysisStatus = AnalysisStatus.FAILED;
+    analysisError = errorMessage(error);
+    analysis = buildFallbackAnalysis(error);
+  }
+
+  const urgency = toUrgencyEnum(analysis.urgency);
+  const sentiment = toSentimentEnum(analysis.sentiment);
 
   const interaction = await prisma.ticketInteraction.create({
     data: {
@@ -148,20 +194,50 @@ export async function addMessage(userId: string, ticketId: string, text: string)
       userText: text,
       modelOutput: analysis as unknown as Prisma.InputJsonValue,
       category: analysis.category,
-      urgency: toUrgencyEnum(analysis.urgency),
+      urgency,
       urgencyColour: analysis.urgency_colour,
-      sentiment: toSentimentEnum(analysis.sentiment),
+      sentiment,
       department: analysis.department,
       keyPhrases: analysis.key_phrases,
       modelName: analysis.model_name,
       modelVersion: analysis.model_version,
-      promptVersion: analysis.prompt_version ?? null
+      promptVersion: analysis.prompt_version ?? null,
+      analysisStatus,
+      analysisError,
+      analysisRuns: {
+        create: {
+          status: analysisStatus,
+          modelName: analysis.model_name,
+          modelVersion: analysis.model_version,
+          promptVersion: analysis.prompt_version ?? null,
+          rawOutput: analysis as unknown as Prisma.InputJsonValue,
+          category: analysis.category,
+          urgency,
+          sentiment,
+          department: analysis.department,
+          keyPhrases: analysis.key_phrases,
+          errorMessage: analysisError,
+          completedAt: new Date()
+        }
+      }
+    },
+    include: {
+      validations: true,
+      analysisRuns: {
+        orderBy: { startedAt: "desc" },
+        take: 1
+      }
     }
   });
 
-  if (analysis.vector_id) {
-    await prisma.ticketVector.create({
-      data: {
+  if (analysisStatus === AnalysisStatus.SUCCESS && analysis.vector_id) {
+    await prisma.ticketVector.upsert({
+      where: { interactionId },
+      update: {
+        id: analysis.vector_id,
+        clusterId: analysis.cluster_id ?? null
+      },
+      create: {
         id: analysis.vector_id,
         ticketId,
         interactionId,

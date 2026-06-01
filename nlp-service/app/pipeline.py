@@ -9,9 +9,9 @@ CATEGORY_TO_DEPARTMENT = {
     "Payment Issue": "Finance Department",
     "Refund Issue": "Finance Department",
     "Technical Issue": "Technical Support Department",
-    "Delivery Issue": "Logistics Department",
     "Account Access": "Customer Service Department",
     "Account Issue": "Customer Service Department",
+    "Delivery Issue": "Logistics Department",
     "Product Issue": "Product Department",
     "Service Complaint": "Customer Service Department",
     "General Enquiry": "Customer Service Department",
@@ -27,8 +27,10 @@ URGENCY_COLOUR = {
 class NlpPipeline:
     def __init__(self) -> None:
         self.classifier = get_classifier()
-        self.embedding_model: EmbeddingModel = get_embedding_model()
         self.pinecone = PineconeClient()
+        # Embedding models are only needed when vector search is enabled. This keeps local
+        # development light and avoids failing startup when Pinecone is intentionally disabled.
+        self.embedding_model: EmbeddingModel | None = get_embedding_model() if self.pinecone.enabled else None
 
     def analyse(self, request: AnalyseRequest) -> AnalyseResponse:
         text = request.text.strip()
@@ -42,33 +44,34 @@ class NlpPipeline:
         else:
             category_pred = self.classifier.predict_category(text)
             sentiment_pred = self.classifier.predict_sentiment(text)
-            urgency_pred = self.classifier.predict_urgency(
-                text,
-                category_pred.label,
-                sentiment_pred.label,
-            )
+            urgency_pred = self.classifier.predict_urgency(text, category_pred.label, sentiment_pred.label)
             llm_key_phrases = []
 
-        department = CATEGORY_TO_DEPARTMENT.get(
-            category_pred.label,
-            "Customer Service Department",
-        )
+        department = CATEGORY_TO_DEPARTMENT.get(category_pred.label, "Customer Service Department")
         key_phrases = llm_key_phrases or simple_keyphrases(text)
-        vector = self.embedding_model.encode(text)
 
-        vector_id, similar_tickets, cluster_id = self.pinecone.upsert_and_search(
-            interaction_id=request.interaction_id,
-            ticket_id=request.ticket_id,
-            user_id=request.user_id,
-            text=text,
-            vector=vector,
-            category=category_pred.label,
-            urgency=urgency_pred.label,
-            sentiment=sentiment_pred.label,
-            department=department,
-        )
+        vector_id = None
+        similar_tickets = []
+        cluster_id = None
 
-        model_name = getattr(self.classifier, "model_name", "unknown")
+        if self.pinecone.enabled and self.embedding_model is not None:
+            try:
+                vector = self.embedding_model.encode(text)
+                vector_id, similar_tickets, cluster_id = self.pinecone.upsert_and_search(
+                    interaction_id=request.interaction_id,
+                    ticket_id=request.ticket_id,
+                    user_id=request.user_id,
+                    text=text,
+                    vector=vector,
+                    category=category_pred.label,
+                    urgency=urgency_pred.label,
+                    sentiment=sentiment_pred.label,
+                    department=department,
+                )
+            except Exception as exc:  # pragma: no cover - external vector integration safety
+                print(f"Vector search skipped due to error: {exc}")
+
+        model_name = getattr(self.classifier, "model_name", self.classifier.__class__.__name__)
         model_version = getattr(self.classifier, "model_version", "0.2.0")
         prompt_version = getattr(self.classifier, "prompt_version", None)
 

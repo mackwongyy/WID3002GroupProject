@@ -139,8 +139,8 @@ NLP_MODE=llama
 LLM_MODEL_NAME=mesolitica/Malaysian-Llama-3.2-3B-Instruct
 LLM_DEVICE=auto
 LLM_TORCH_DTYPE=auto
-LLM_MAX_INPUT_TOKENS=1024
-LLM_MAX_NEW_TOKENS=128
+LLM_MAX_INPUT_TOKENS=2048
+LLM_MAX_NEW_TOKENS=256
 LLM_TEMPERATURE=0.0
 ```
 
@@ -283,3 +283,99 @@ SELECT * FROM admin_validations ORDER BY "validatedAt" DESC LIMIT 10;
 ## Notes for Further Fine-Tuning
 
 Full LoRA fine-tuning can be done in the future using the scripts in `nlp-service/training/`, while the demo mode allows the complete system flow to be tested immediately.
+
+
+## Industry-Grade Reliability Improvements
+
+This version adds a more production-like reliability layer around NLP analysis and admin review.
+
+### Resilient NLP Analysis
+
+Customer messages are now persisted even when the NLP service is unavailable, slow, or returns an error. Instead of failing the whole ticket-message request, the backend stores the interaction with:
+
+```text
+analysisStatus = SUCCESS | PENDING | FAILED
+analysisError = error message when analysis fails
+```
+
+When analysis fails, the backend uses a safe fallback model output:
+
+```text
+category: General Enquiry
+urgency: Low
+sentiment: Neutral
+department: Customer Service Department
+modelName: analysis-failed-fallback
+```
+
+This keeps the ticketing system usable even when the AI layer is degraded.
+
+### Analysis Run Audit Trail
+
+A new `analysis_runs` table stores each analysis attempt for every ticket interaction. This provides an audit history for:
+
+- successful NLP outputs
+- failed NLP calls
+- retry attempts
+- model name, model version and prompt version
+- raw output/error message
+
+This makes the system easier to debug and more suitable for model comparison and future retraining.
+
+### Admin Retry Workflow
+
+Admins can now retry failed NLP analysis from the user-level admin ticket history page through:
+
+```http
+POST /api/admin/interactions/:interactionId/reanalyse
+```
+
+If the retry succeeds, the interaction is updated with the latest model output. If it fails, the failure is saved in both `ticket_interactions` and `analysis_runs`.
+
+### Health and Observability
+
+The backend now exposes a deeper health endpoint:
+
+```http
+GET /api/health
+```
+
+It checks:
+
+- backend availability
+- PostgreSQL connectivity
+- NLP service availability
+- latency per dependency
+
+Every backend response also includes an `x-request-id` header. Error responses include the same request ID, making debugging easier across browser, backend and logs.
+
+### Environment Setup
+
+Each service now includes its own safe `.env.example`:
+
+```text
+backend/.env.example
+frontend/.env.example
+nlp-service/.env.example
+```
+
+Do not commit real `.env` files. Use the examples as templates.
+
+### Database Migration
+
+This version adds a Prisma migration:
+
+```text
+backend/prisma/migrations/20260601120000_industry_grade_analysis_status/
+```
+
+Run:
+
+```bash
+cd backend
+npx prisma generate
+npx prisma migrate dev
+npm run db:seed
+```
+
+For Docker deployment, `docker compose up --build` now runs `prisma migrate deploy` instead of pushing the schema directly.

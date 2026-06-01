@@ -29,6 +29,11 @@ services:
     volumes:
       - ./nlp-service/models:/app/models
       - hf_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/health\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   backend:
     build:
@@ -43,8 +48,8 @@ services:
       postgres:
         condition: service_healthy
       nlp-service:
-        condition: service_started
-    command: sh -c "npx prisma db push && npm run start"
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && npm run db:seed && npm run start"
 
   frontend:
     build:

@@ -29,6 +29,12 @@ enum SentimentLabel {
   NEGATIVE
 }
 
+enum AnalysisStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
 model User {
   id           String            @id @default(uuid())
   name         String
@@ -79,10 +85,13 @@ model TicketInteraction {
   modelName     String
   modelVersion  String
   promptVersion String?
-  createdAt     DateTime          @default(now())
-  ticket        Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  validations   AdminValidation[]
-  vector        TicketVector?
+  analysisStatus AnalysisStatus    @default(SUCCESS)
+  analysisError  String?
+  createdAt      DateTime          @default(now())
+  ticket         Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  validations    AdminValidation[]
+  vector         TicketVector?
+  analysisRuns   AnalysisRun[]
 
   @@unique([ticketId, stepNumber])
   @@index([category])
@@ -90,6 +99,29 @@ model TicketInteraction {
   @@index([sentiment])
   @@index([department])
   @@map("ticket_interactions")
+}
+
+model AnalysisRun {
+  id            String            @id @default(uuid())
+  interactionId String
+  status        AnalysisStatus
+  modelName     String?
+  modelVersion  String?
+  promptVersion String?
+  rawOutput     Json?
+  category      String?
+  urgency       UrgencyLevel?
+  sentiment     SentimentLabel?
+  department    String?
+  keyPhrases    String[]          @default([])
+  errorMessage  String?
+  startedAt     DateTime          @default(now())
+  completedAt   DateTime?
+  interaction   TicketInteraction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+
+  @@index([interactionId])
+  @@index([status])
+  @@map("analysis_runs")
 }
 
 model AdminValidation {

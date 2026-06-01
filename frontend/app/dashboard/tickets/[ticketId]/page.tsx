@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { ArrowLeft, Send } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ArrowLeft, Send, AlertTriangle } from "lucide-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Badge } from "@/components/Badge";
 import { api, type Interaction, type Ticket } from "@/lib/api";
@@ -98,6 +98,22 @@ function TicketPageContent() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">User message · Step {interaction.stepNumber}</p>
                 <p className="mt-2 whitespace-pre-wrap text-slate-900">{interaction.userText}</p>
               </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Badge tone={interaction.analysisStatus === "FAILED" ? "red" : interaction.analysisStatus === "PENDING" ? "orange" : "green"}>
+                  Analysis {interaction.analysisStatus ?? "SUCCESS"}
+                </Badge>
+              </div>
+
+              {interaction.analysisError ? (
+                <div className="mt-4 flex gap-2 rounded-2xl bg-red-50 p-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 shrink-0" size={16} />
+                  <div>
+                    <p className="font-semibold">Analysis fallback used</p>
+                    <p className="mt-1">{interaction.analysisError}</p>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                 <div className="rounded-2xl border border-slate-200 p-4">
