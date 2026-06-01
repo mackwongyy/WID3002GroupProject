@@ -1,12 +1,34 @@
-import { Prisma, SentimentLabel, TicketStatus, UrgencyLevel } from "@prisma/client";
+import { AnalysisStatus, Prisma, SentimentLabel, TicketStatus, UrgencyLevel } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { HttpError } from "../../utils/http.js";
+import { analyseText } from "../nlp/nlp.client.js";
 
 function countBy<T extends string>(values: T[]): Record<T, number> {
   return values.reduce((acc, value) => {
     acc[value] = (acc[value] ?? 0) + 1;
     return acc;
   }, {} as Record<T, number>);
+}
+
+
+
+function toUrgencyEnum(value: string): UrgencyLevel {
+  const normalized = value.toUpperCase();
+  if (normalized === "HIGH") return UrgencyLevel.HIGH;
+  if (normalized === "MEDIUM") return UrgencyLevel.MEDIUM;
+  return UrgencyLevel.LOW;
+}
+
+function toSentimentEnum(value: string): SentimentLabel {
+  const normalized = value.toUpperCase();
+  if (normalized === "POSITIVE") return SentimentLabel.POSITIVE;
+  if (normalized === "NEGATIVE") return SentimentLabel.NEGATIVE;
+  return SentimentLabel.NEUTRAL;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return "Unknown NLP analysis error.";
 }
 
 function countPhrases(phraseGroups: string[][]) {
@@ -56,6 +78,7 @@ export async function getSummary() {
         sentiment: true,
         department: true,
         keyPhrases: true,
+        analysisStatus: true,
         ticketId: true,
         stepNumber: true,
         validations: { select: { id: true } },
@@ -93,7 +116,8 @@ export async function getSummary() {
     urgency_breakdown: urgencyBreakdown,
     sentiment_breakdown: sentimentBreakdown,
     top_key_phrases: countPhrases(interactions.map((i) => i.keyPhrases)),
-    validation_summary: buildValidationSummary(interactions)
+    validation_summary: buildValidationSummary(interactions),
+    analysis_status_breakdown: countBy(interactions.map((i) => i.analysisStatus))
   };
 }
 
@@ -185,7 +209,9 @@ export async function getUserAnalytics(userId: string) {
         sentiment: true,
         department: true,
         keyPhrases: true,
-        validations: { select: { id: true } }
+        validations: { select: { id: true } },
+        analysisStatus: true,
+        analysisError: true
       }
     })
   ]);
@@ -198,6 +224,7 @@ export async function getUserAnalytics(userId: string) {
       submitted: tickets.filter((t) => t.status === TicketStatus.SUBMITTED).length
     },
     validation_summary: buildValidationSummary(interactions),
+    analysis_status_breakdown: countBy(interactions.map((i) => i.analysisStatus)),
     category_breakdown: countBy(interactions.map((i) => i.category)),
     urgency_breakdown: countBy(interactions.map((i) => i.urgency)),
     sentiment_breakdown: countBy(interactions.map((i) => i.sentiment)),
@@ -220,6 +247,10 @@ export async function getTicketHistory(ticketId: string) {
               admin: { select: { id: true, name: true, email: true } }
             },
             orderBy: { validatedAt: "desc" }
+          },
+          analysisRuns: {
+            orderBy: { startedAt: "desc" },
+            take: 5
           }
         }
       }
@@ -290,4 +321,149 @@ export async function validateInteraction(
     is_validated: true,
     validated_at: validation.validatedAt
   };
+}
+
+
+export async function retryAnalysis(interactionId: string) {
+  const interaction = await prisma.ticketInteraction.findUnique({
+    where: { id: interactionId },
+    include: {
+      ticket: { select: { id: true, userId: true, deletedAt: true } }
+    }
+  });
+
+  if (!interaction || interaction.ticket.deletedAt) {
+    throw new HttpError(404, "INTERACTION_NOT_FOUND", "Interaction was not found.");
+  }
+
+  await prisma.ticketInteraction.update({
+    where: { id: interactionId },
+    data: {
+      analysisStatus: AnalysisStatus.PENDING,
+      analysisError: null
+    }
+  });
+
+  const run = await prisma.analysisRun.create({
+    data: {
+      interactionId,
+      status: AnalysisStatus.PENDING,
+      startedAt: new Date()
+    }
+  });
+
+  try {
+    const analysis = await analyseText({
+      interaction_id: interactionId,
+      ticket_id: interaction.ticketId,
+      user_id: interaction.ticket.userId,
+      text: interaction.userText
+    });
+
+    const urgency = toUrgencyEnum(analysis.urgency);
+    const sentiment = toSentimentEnum(analysis.sentiment);
+
+    const [updatedInteraction] = await prisma.$transaction([
+      prisma.ticketInteraction.update({
+        where: { id: interactionId },
+        data: {
+          modelOutput: analysis as unknown as Prisma.InputJsonValue,
+          category: analysis.category,
+          urgency,
+          urgencyColour: analysis.urgency_colour,
+          sentiment,
+          department: analysis.department,
+          keyPhrases: analysis.key_phrases,
+          modelName: analysis.model_name,
+          modelVersion: analysis.model_version,
+          promptVersion: analysis.prompt_version ?? null,
+          analysisStatus: AnalysisStatus.SUCCESS,
+          analysisError: null
+        },
+        include: {
+          validations: {
+            include: { admin: { select: { id: true, name: true, email: true } } },
+            orderBy: { validatedAt: "desc" }
+          },
+          analysisRuns: {
+            orderBy: { startedAt: "desc" },
+            take: 5
+          }
+        }
+      }),
+      prisma.analysisRun.update({
+        where: { id: run.id },
+        data: {
+          status: AnalysisStatus.SUCCESS,
+          modelName: analysis.model_name,
+          modelVersion: analysis.model_version,
+          promptVersion: analysis.prompt_version ?? null,
+          rawOutput: analysis as unknown as Prisma.InputJsonValue,
+          category: analysis.category,
+          urgency,
+          sentiment,
+          department: analysis.department,
+          keyPhrases: analysis.key_phrases,
+          completedAt: new Date()
+        }
+      })
+    ]);
+
+    if (analysis.vector_id) {
+      await prisma.ticketVector.upsert({
+        where: { interactionId },
+        update: {
+          id: analysis.vector_id,
+          clusterId: analysis.cluster_id ?? null
+        },
+        create: {
+          id: analysis.vector_id,
+          ticketId: interaction.ticketId,
+          interactionId,
+          clusterId: analysis.cluster_id ?? null
+        }
+      });
+    }
+
+    return {
+      interaction: updatedInteraction,
+      analysis_status: AnalysisStatus.SUCCESS
+    };
+  } catch (error) {
+    const message = errorMessage(error);
+
+    const [updatedInteraction] = await prisma.$transaction([
+      prisma.ticketInteraction.update({
+        where: { id: interactionId },
+        data: {
+          analysisStatus: AnalysisStatus.FAILED,
+          analysisError: message
+        },
+        include: {
+          validations: {
+            include: { admin: { select: { id: true, name: true, email: true } } },
+            orderBy: { validatedAt: "desc" }
+          },
+          analysisRuns: {
+            orderBy: { startedAt: "desc" },
+            take: 5
+          }
+        }
+      }),
+      prisma.analysisRun.update({
+        where: { id: run.id },
+        data: {
+          status: AnalysisStatus.FAILED,
+          errorMessage: message,
+          completedAt: new Date()
+        }
+      })
+    ]);
+
+    return {
+      interaction: updatedInteraction,
+      analysis_status: AnalysisStatus.FAILED,
+      error: message
+    };
+  }
 }

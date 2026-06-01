@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowLeft, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { StatCard } from "@/components/StatCard";
 import { BreakdownList } from "@/components/BreakdownList";
@@ -27,6 +27,8 @@ type InteractionWithValidation = {
   department: string;
   keyPhrases?: string[];
   validations?: ValidationRecord[];
+  analysisStatus?: "PENDING" | "SUCCESS" | "FAILED";
+  analysisError?: string | null;
 };
 
 function formatDateTime(value?: string | null) {
@@ -37,7 +39,7 @@ function formatDateTime(value?: string | null) {
   }).format(new Date(value));
 }
 
-function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <div>
@@ -55,6 +57,7 @@ function UserAnalyticsContent() {
   const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
   const [loadingTicketId, setLoadingTicketId] = useState<string | null>(null);
   const [validatingInteractionId, setValidatingInteractionId] = useState<string | null>(null);
+  const [reanalysingInteractionId, setReanalysingInteractionId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -99,6 +102,28 @@ function UserAnalyticsContent() {
     }
   }
 
+
+
+  async function reanalyseInteraction(interaction: InteractionWithValidation) {
+    setError("");
+    setNotice("");
+    setReanalysingInteractionId(interaction.id);
+    try {
+      const result = await api.reanalyseInteraction(interaction.id);
+      if (selectedTicket) await openTicket(selectedTicket.id);
+      await loadAnalytics();
+      if (result.analysis_status === "SUCCESS") {
+        setNotice(`Step ${interaction.stepNumber} was re-analysed successfully.`);
+      } else {
+        setError(result.error ?? `Step ${interaction.stepNumber} analysis retry failed.`);
+      }
+    } catch (err: any) {
+      setError(err.message ?? "Unable to retry analysis.");
+    } finally {
+      setReanalysingInteractionId(null);
+    }
+  }
+
   const selectedTicketValidationSummary = useMemo(() => {
     const interactions = selectedTicket?.interactions ?? [];
     const validated = interactions.filter((interaction: InteractionWithValidation) => (interaction.validations?.length ?? 0) > 0).length;
@@ -125,13 +150,15 @@ function UserAnalyticsContent() {
         {notice ? <p className="rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p> : null}
 
         <SectionCard title="User Snapshot" subtitle="Ticket progress and validation coverage for this user.">
-          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-8">
             <StatCard label="Total Tickets" value={analytics.ticket_summary.total_tickets} />
             <StatCard label="In Progress" value={analytics.ticket_summary.in_progress} />
             <StatCard label="Submitted" value={analytics.ticket_summary.submitted} />
             <StatCard label="Interactions" value={analytics.validation_summary?.total_interactions ?? 0} />
             <StatCard label="Validated" value={analytics.validation_summary?.validated_interactions ?? 0} />
             <StatCard label="Pending Review" value={analytics.validation_summary?.pending_interactions ?? 0} />
+            <StatCard label="Analysis Failed" value={analytics.analysis_status_breakdown?.FAILED ?? 0} />
+            <StatCard label="Analysis Pending" value={analytics.analysis_status_breakdown?.PENDING ?? 0} />
           </div>
         </SectionCard>
 
@@ -140,6 +167,7 @@ function UserAnalyticsContent() {
             <BreakdownList title="Categories" data={analytics.category_breakdown} />
             <BreakdownList title="Urgency Levels" data={analytics.urgency_breakdown} />
             <BreakdownList title="Sentiment Breakdown" data={analytics.sentiment_breakdown} />
+            <BreakdownList title="Analysis Status" data={analytics.analysis_status_breakdown} />
             <BreakdownList title="Departments Routed To" data={analytics.department_breakdown} />
             <BreakdownList title="Top Key Phrases" data={analytics.top_key_phrases} />
           </div>
@@ -196,12 +224,19 @@ function UserAnalyticsContent() {
                   const latestValidation = interaction.validations?.[0];
                   const isValidated = Boolean(latestValidation);
                   const isLoading = validatingInteractionId === interaction.id;
+                  const isReanalysing = reanalysingInteractionId === interaction.id;
+                  const analysisStatus = interaction.analysisStatus ?? "SUCCESS";
 
                   return (
                     <article key={interaction.id} className="rounded-2xl border border-slate-200 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <p className="text-xs font-semibold uppercase text-slate-500">Step {interaction.stepNumber}</p>
-                        {isValidated ? <Badge tone="green">Validated</Badge> : <Badge tone="orange">Pending Review</Badge>}
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone={analysisStatus === "SUCCESS" ? "green" : analysisStatus === "PENDING" ? "orange" : "red"}>
+                            Analysis {analysisStatus}
+                          </Badge>
+                          {isValidated ? <Badge tone="green">Validated</Badge> : <Badge tone="orange">Pending Review</Badge>}
+                        </div>
                       </div>
                       <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">{interaction.userText}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -213,6 +248,13 @@ function UserAnalyticsContent() {
 
                       {interaction.keyPhrases?.length ? (
                         <p className="mt-3 text-xs text-slate-500">Key phrases: {interaction.keyPhrases.join(", ")}</p>
+                      ) : null}
+
+                      {interaction.analysisError ? (
+                        <div className="mt-4 rounded-2xl bg-red-50 p-3 text-sm text-red-700">
+                          <p className="font-semibold">Analysis error</p>
+                          <p className="mt-1">{interaction.analysisError}</p>
+                        </div>
                       ) : null}
 
                       {isValidated ? (
@@ -227,18 +269,31 @@ function UserAnalyticsContent() {
                         </div>
                       ) : null}
 
-                      <button
-                        onClick={() => validateInteraction(interaction)}
-                        disabled={isValidated || isLoading}
-                        className={`mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                          isValidated
-                            ? "cursor-not-allowed bg-emerald-100 text-emerald-700"
-                            : "bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70"
-                        }`}
-                      >
-                        {isLoading ? <Loader2 className="animate-spin" size={16} /> : isValidated ? <CheckCircle2 size={16} /> : null}
-                        {isValidated ? "Validated" : isLoading ? "Saving..." : "Mark as Validated"}
-                      </button>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => validateInteraction(interaction)}
+                          disabled={isValidated || isLoading}
+                          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                            isValidated
+                              ? "cursor-not-allowed bg-emerald-100 text-emerald-700"
+                              : "bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70"
+                          }`}
+                        >
+                          {isLoading ? <Loader2 className="animate-spin" size={16} /> : isValidated ? <CheckCircle2 size={16} /> : null}
+                          {isValidated ? "Validated" : isLoading ? "Saving..." : "Mark as Validated"}
+                        </button>
+
+                        {analysisStatus === "FAILED" ? (
+                          <button
+                            onClick={() => reanalyseInteraction(interaction)}
+                            disabled={isReanalysing}
+                            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70"
+                          >
+                            {isReanalysing ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                            {isReanalysing ? "Retrying..." : "Retry Analysis"}
+                          </button>
+                        ) : null}
+                      </div>
                     </article>
                   );
                 })}

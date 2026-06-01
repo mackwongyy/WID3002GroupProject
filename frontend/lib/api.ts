@@ -18,6 +18,8 @@ export type Ticket = {
   _count?: { interactions: number };
 };
 
+export type AnalysisStatus = "PENDING" | "SUCCESS" | "FAILED";
+
 export type Interaction = {
   id: string;
   ticketId: string;
@@ -39,6 +41,8 @@ export type Interaction = {
   sentiment: Sentiment;
   department: string;
   keyPhrases: string[];
+  analysisStatus?: AnalysisStatus;
+  analysisError?: string | null;
   createdAt: string;
 };
 
@@ -112,5 +116,9 @@ export const api = {
     request<any>(`/api/admin/interactions/${interactionId}/validate`, {
       method: "PATCH",
       body: JSON.stringify(payload)
+    }),
+  reanalyseInteraction: (interactionId: string) =>
+    request<any>(`/api/admin/interactions/${interactionId}/reanalyse`, {
+      method: "POST"
     })
 };

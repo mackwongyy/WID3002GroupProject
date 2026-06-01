@@ -73,7 +73,7 @@ function AdminContent() {
         {error ? <p className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
         <SectionCard title="Snapshot" subtitle="Overall system activity and admin review coverage.">
-          <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
+          <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-9">
             <StatCard label="Total Tickets" value={summary.total_tickets} />
             <StatCard label="In Progress" value={summary.status_breakdown?.IN_PROGRESS ?? 0} />
             <StatCard label="Submitted" value={summary.status_breakdown?.SUBMITTED ?? 0} />
@@ -81,14 +81,17 @@ function AdminContent() {
             <StatCard label="Interactions" value={summary.validation_summary?.total_interactions ?? 0} />
             <StatCard label="Validated" value={summary.validation_summary?.validated_interactions ?? 0} />
             <StatCard label="Pending Review" value={summary.validation_summary?.pending_interactions ?? 0} />
+            <StatCard label="Analysis Failed" value={summary.analysis_status_breakdown?.FAILED ?? 0} />
+            <StatCard label="Analysis Pending" value={summary.analysis_status_breakdown?.PENDING ?? 0} />
           </div>
         </SectionCard>
 
         <SectionCard title="Model Output Analytics" subtitle="Aggregated categories, urgency, sentiment, departments, and key phrases produced by the NLP service.">
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-4">
             <BreakdownList title="Categories" data={summary.category_breakdown} />
             <BreakdownList title="Urgency Levels" data={summary.urgency_breakdown} />
             <BreakdownList title="Sentiment Breakdown" data={summary.sentiment_breakdown} />
+            <BreakdownList title="Analysis Status" data={summary.analysis_status_breakdown} />
             <BreakdownList title="Departments Routed To" data={summary.department_breakdown} />
             <BreakdownList title="Top Key Phrases" data={summary.top_key_phrases} />
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

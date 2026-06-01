@@ -10,7 +10,8 @@ const EnvSchema = z.object({
   JWT_SECRET: z.string().min(16, "JWT_SECRET should be at least 16 characters."),
   JWT_EXPIRES_IN: z.string().default("7d"),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
-  NLP_SERVICE_URL: z.string().url().default("http://localhost:8000")
+  NLP_SERVICE_URL: z.string().url().default("http://localhost:8000"),
+  NLP_TIMEOUT_MS: z.coerce.number().int().positive().default(15000)
 });
 
 export const env = EnvSchema.parse(process.env);

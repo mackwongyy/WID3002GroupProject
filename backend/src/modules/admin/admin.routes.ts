@@ -71,3 +71,12 @@ adminRouter.patch("/interactions/:interactionId/validate", async (req, res, next
     next(error);
   }
 });
+
+adminRouter.post("/interactions/:interactionId/reanalyse", async (req, res, next) => {
+  try {
+    const result = await adminService.retryAnalysis(req.params.interactionId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
