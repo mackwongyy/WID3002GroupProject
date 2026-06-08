@@ -35,7 +35,7 @@ class DemoClassifier:
     """Lightweight local fallback classifier.
 
     This mode is safe for local Mac development and keeps the full app working
-    without loading the large Malaysian Llama model.
+    without loading the larger Hugging Face model.
     """
 
     model_name = "demo-rules"
@@ -125,8 +125,8 @@ class MalaysianLlamaClassifier:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self.model_name = settings.llm_model_name
-        self.model_version = "base-llama-v1"
-        self.prompt_version = "malaysian-feedback-json-v1"
+        self.model_version = "qwen3-base-v1"
+        self.prompt_version = "qwen3-malaysia-feedback-json-v1"
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             settings.llm_model_name,
@@ -159,11 +159,19 @@ class MalaysianLlamaClassifier:
             {"role": "user", "content": text},
         ]
 
-        prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        try:
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=settings.llm_enable_thinking,
+            )
+        except TypeError:
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
 
         inputs = self.tokenizer(
             prompt,
@@ -207,10 +215,10 @@ class MalaysianLlamaClassifier:
 
 
 class MalaysianLlamaLoraClassifier(MalaysianLlamaClassifier):
-    """Malaysian Llama + PEFT LoRA adapter classifier.
+    """Qwen3 / Hugging Face causal LM + PEFT LoRA adapter classifier.
 
     Expected adapter:
-    - mackwongyy/malaysian-feedback-lora-5k-data
+    - jieshengchai/qwen3-malaysia-cs-lora-5000-v2
 
     This class deliberately avoids bitsandbytes by default. For Colab/T4 or
     GPU servers, FP16 loading is much more stable for inference than the earlier
@@ -234,8 +242,8 @@ class MalaysianLlamaLoraClassifier(MalaysianLlamaClassifier):
         self.model.eval()
 
         self.model_name = f"{settings.llm_model_name}+{settings.llm_adapter_path}"
-        self.model_version = "lora-adapter-5k-data-v1"
-        self.prompt_version = "malaysian-feedback-json-lora-5k-v1"
+        self.model_version = "qwen3-malaysia-cs-lora-5000-v2"
+        self.prompt_version = "qwen3-malaysia-feedback-json-lora-v2"
 
 
 class EmbeddingModel:
@@ -269,10 +277,10 @@ def get_classifier():
     if mode == "demo":
         return DemoClassifier()
 
-    if mode in {"malaysian-llama-lora", "llama-lora", "lora"}:
+    if mode in {"qwen-lora", "qwen3-lora", "malaysian-llama-lora", "llama-lora", "lora"}:
         return MalaysianLlamaLoraClassifier()
 
-    if mode in {"malaysian-llama", "llama"}:
+    if mode in {"qwen", "qwen3", "malaysian-llama", "llama"}:
         return MalaysianLlamaClassifier()
 
     return DemoClassifier()

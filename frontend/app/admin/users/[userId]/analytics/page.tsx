@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowLeft, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { StatCard } from "@/components/StatCard";
 import { BreakdownList } from "@/components/BreakdownList";
@@ -58,6 +58,7 @@ function UserAnalyticsContent() {
   const [loadingTicketId, setLoadingTicketId] = useState<string | null>(null);
   const [validatingInteractionId, setValidatingInteractionId] = useState<string | null>(null);
   const [reanalysingInteractionId, setReanalysingInteractionId] = useState<string | null>(null);
+  const [deletingInteractionId, setDeletingInteractionId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -121,6 +122,36 @@ function UserAnalyticsContent() {
       setError(err.message ?? "Unable to retry analysis.");
     } finally {
       setReanalysingInteractionId(null);
+    }
+  }
+
+
+  async function deleteInteraction(interaction: InteractionWithValidation) {
+    const confirmed = window.confirm(
+      `Remove Step ${interaction.stepNumber} from this ticket history? This permanently deletes the chat message, model output, validation records, analysis runs, and vector link for this interaction.`
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+    setNotice("");
+    setDeletingInteractionId(interaction.id);
+
+    try {
+      const ticketId = selectedTicket?.id;
+      await api.deleteInteraction(interaction.id);
+
+      if (ticketId) {
+        const result = await api.adminTicketHistory(ticketId);
+        setSelectedTicket(result.ticket);
+      }
+
+      await loadAnalytics();
+      setNotice(`Step ${interaction.stepNumber} was removed from the ticket history.`);
+    } catch (err: any) {
+      setError(err.message ?? "Unable to remove chat history.");
+    } finally {
+      setDeletingInteractionId(null);
     }
   }
 
@@ -202,7 +233,7 @@ function UserAnalyticsContent() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Ticket History & Validation" subtitle="Review each model output and save admin validation into the backend.">
+          <SectionCard title="Ticket History & Validation" subtitle="Review, validate, retry, or remove individual chat interactions from this ticket history.">
             {!selectedTicket ? <p className="text-sm text-slate-500">Select a ticket to inspect its chat history and model outputs.</p> : null}
             {selectedTicket ? (
               <div className="space-y-4">
@@ -225,6 +256,7 @@ function UserAnalyticsContent() {
                   const isValidated = Boolean(latestValidation);
                   const isLoading = validatingInteractionId === interaction.id;
                   const isReanalysing = reanalysingInteractionId === interaction.id;
+                  const isDeleting = deletingInteractionId === interaction.id;
                   const analysisStatus = interaction.analysisStatus ?? "SUCCESS";
 
                   return (
@@ -293,6 +325,15 @@ function UserAnalyticsContent() {
                             {isReanalysing ? "Retrying..." : "Retry Analysis"}
                           </button>
                         ) : null}
+
+                        <button
+                          onClick={() => deleteInteraction(interaction)}
+                          disabled={isDeleting}
+                          className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-wait disabled:opacity-70"
+                        >
+                          {isDeleting ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                          {isDeleting ? "Removing..." : "Remove Chat"}
+                        </button>
                       </div>
                     </article>
                   );

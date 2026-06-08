@@ -120,5 +120,9 @@ export const api = {
   reanalyseInteraction: (interactionId: string) =>
     request<any>(`/api/admin/interactions/${interactionId}/reanalyse`, {
       method: "POST"
+    }),
+  deleteInteraction: (interactionId: string) =>
+    request<any>(`/api/admin/interactions/${interactionId}`, {
+      method: "DELETE"
     })
 };

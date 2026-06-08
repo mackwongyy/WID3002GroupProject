@@ -1,87 +1,216 @@
 # Smart Customer Feedback Analysis System
-WID3002: Natural Language Processing
 
-
+WID3002: Natural Language Processing  
 Universiti Malaya, Academic Year 2025/2026, Semester 2
 
-Group Members
+## Group Members
+
 - Wong Yoong Yee
 - Chai Jie Sheng
 - Allison Low Jia Wen
 - Lim Xin Ying
 
-This is a prototype for an NLP-enabled customer feedback ticketing application, developed for the group project of the course WID3002: Natural Language Processing, at Universiti Malaya.
+## 1. Project Overview
 
-- Role-based login and signup
-- Customer dashboard for managing tickets
-- Chat-based ticket interactions
-- Model output after every user message
-- Admin dashboard with operational analytics
-- User-level analytics for category, urgency, sentiment, key phrases and routed departments
-- Human-in-the-loop validation
-- PostgreSQL storage for structured data
-- Pinecone-compatible vector search for semantic similarity and recurring issue detection
-- Python FastAPI NLP service using either demo heuristics or HuggingFace models
+The Smart Customer Feedback Analysis System is a full-stack NLP-enabled ticketing platform. It allows customers to submit feedback through a chat-style ticket interface. Each message is analysed by an NLP service to predict category, urgency, sentiment, key phrases, routed department, semantic similarity metadata, and analysis status. Admin users can review the ticket history, validate model outputs, retry failed analysis, and remove incorrect or unwanted chat interactions from the validation page.
 
-## Repository Structure
+This README is the single consolidated project documentation file. It replaces separate patch notes and scattered implementation summaries.
 
-```text
-smart-feedback-system/
-├── frontend/       # Next.js + React dashboard application
-├── backend/        # Node.js + Express + Prisma API server
-├── nlp-service/    # Python FastAPI NLP and Pinecone service
-├── docs/           # Architecture and API documentation
-├── docker-compose.yml
-└── .env.example
-```
+## 2. Core Features
 
-## Architecture Summary
+### Customer Features
+
+- Customer signup and login
+- Create, rename, reorder, submit, and soft-delete tickets
+- Add chat messages while tickets are still in progress
+- View model-generated output for every chat message
+- View submitted ticket history after submission
+
+### Admin Features
+
+- Admin login and protected admin dashboard
+- Overall dashboard summary
+- User list and user-level analytics
+- Category, urgency, sentiment, department, key phrase, validation, and analysis-status breakdowns
+- Ticket history inspection
+- Human-in-the-loop validation using `Mark as Validated`
+- Retry failed NLP analysis
+- Remove individual chat interactions from the admin validation page
+- Backend-persisted validation records
+
+## 3. High-Level Architecture
 
 ```text
 Customer/Admin Browser
         ↓
 Next.js Frontend
         ↓
-Node.js Backend API
+Node.js + Express Backend API
         ↓
-PostgreSQL Database
+PostgreSQL + Prisma
         ↓
-Python NLP Service
+Python FastAPI NLP Service
         ↓
-Pinecone Vector DB
+Optional Pinecone Vector Search
 ```
 
-The backend owns authentication, authorisation, tickets, chat histories, validations and analytics. The NLP service owns category classification, urgency detection, sentiment analysis, key phrase extraction, department routing, embedding generation and Pinecone similarity search.
+The backend owns authentication, role-based access control, tickets, interactions, admin validation, retry analysis, deletion controls, and analytics. The NLP service owns text classification, urgency detection, sentiment analysis, key phrase extraction, department routing, and optional vector search.
 
-## Quick Start with Docker
-
-1. Copy the environment file:
-
-```bash
-cp .env.example .env
-```
-
-2. Start PostgreSQL, backend, NLP service and frontend:
-
-```bash
-docker compose up --build
-```
-
-3. Open the application:
+## 4. Repository Structure
 
 ```text
-Frontend:    http://localhost:3000
-Backend API: http://localhost:4000/health
-NLP API:     http://localhost:8000/health
+WID3002GroupProject/
+├── backend/        # Express API, Prisma, PostgreSQL integration
+├── frontend/       # Next.js dashboard application
+├── nlp-service/    # FastAPI NLP service
+├── README.md       # Single consolidated project documentation
+├── docker-compose.yml
+└── .env.example
 ```
 
-4. Seed demo users:
+## 5. Current NLP Model Stack
+
+The project has shifted from the previous Mesolitica/Malaysian-Llama + Mack LoRA setup to the Qwen-based model stack:
+
+```text
+Base model:
+Qwen/Qwen3-1.7B
+
+LoRA adapter:
+jieshengchai/qwen3-malaysia-cs-lora-5000-v2
+```
+
+Local development should still use `NLP_MODE=demo` because loading the Qwen model and LoRA adapter is better suited for GPU environments such as Colab, RunPod, or a CUDA server.
+
+Recommended local mode:
+
+```env
+NLP_MODE=demo
+```
+
+Recommended GPU mode:
+
+```env
+NLP_MODE=qwen-lora
+LLM_MODEL_NAME=Qwen/Qwen3-1.7B
+LLM_ADAPTER_PATH=jieshengchai/qwen3-malaysia-cs-lora-5000-v2
+LLM_ENABLE_THINKING=false
+LLM_DEVICE=cuda
+LLM_TORCH_DTYPE=float16
+```
+
+`LLM_ENABLE_THINKING=false` is used because this system expects strict JSON classification output rather than free-form reasoning text.
+
+## 6. Environment Files
+
+Do not commit real `.env` files with secrets. Commit only `.env.example` files.
+
+### Root `.env.example`
+
+Used mainly for Docker Compose and shared environment reference.
+
+New / updated model variables:
+
+```env
+# NEW / UPDATED - Qwen model stack replacing the earlier Mesolitica/Mack LoRA setup.
+LLM_MODEL_NAME=Qwen/Qwen3-1.7B
+LLM_ADAPTER_PATH=jieshengchai/qwen3-malaysia-cs-lora-5000-v2
+LLM_ENABLE_THINKING=false
+```
+
+### Backend `backend/.env.example`
+
+```env
+NODE_ENV=development
+PORT=4000
+DATABASE_URL=postgresql://mackwongyy@localhost:5432/smart_feedback?schema=public
+JWT_SECRET=change-this-secret-in-development-123456
+JWT_EXPIRES_IN=7d
+CORS_ORIGIN=http://localhost:3000
+NLP_SERVICE_URL=http://127.0.0.1:8000
+NLP_TIMEOUT_MS=15000
+```
+
+### Frontend `frontend/.env.example`
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
+```
+
+### NLP Service `nlp-service/.env.example`
+
+```env
+NLP_MODE=demo
+
+# NEW / UPDATED - Qwen base model and friend's LoRA adapter.
+LLM_MODEL_NAME=Qwen/Qwen3-1.7B
+LLM_ADAPTER_PATH=jieshengchai/qwen3-malaysia-cs-lora-5000-v2
+LLM_ENABLE_THINKING=false
+
+LLM_DEVICE=auto
+LLM_TORCH_DTYPE=auto
+LLM_MAX_INPUT_TOKENS=1024
+LLM_MAX_NEW_TOKENS=128
+LLM_TEMPERATURE=0.0
+```
+
+## 7. Local Development Setup
+
+### 7.1 Backend
 
 ```bash
-docker compose exec backend npm run db:seed
+cd backend
+npm install
+npx prisma generate
+npx prisma migrate dev --name init
+npm run db:seed
+npm run dev
 ```
 
-Demo accounts:
+Expected success signs:
+
+```text
+Environment variables loaded from .env
+Datasource "db": PostgreSQL database "smart_feedback"
+Seed completed.
+Backend API listening on port 4000
+```
+
+### 7.2 NLP Service
+
+```bash
+cd nlp-service
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Test:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+### 7.3 Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Avoid using `192.168.x.x` unless you also update `CORS_ORIGIN`, `NEXT_PUBLIC_API_BASE_URL`, and `allowedDevOrigins`.
+
+## 8. Demo Accounts
+
+After seeding:
 
 ```text
 Customer
@@ -93,123 +222,68 @@ Email: admin@example.com
 Password: password123
 ```
 
-## Local Development Without Docker
+## 9. Important API Endpoints
 
-### Backend
+### Auth
 
-```bash
-cd backend
-npm install
-npx prisma generate
-npx prisma migrate dev --name init
-npm run db:seed
-npm run dev
+```http
+POST /api/auth/signup
+POST /api/auth/login
+GET  /api/auth/me
 ```
-
-### NLP Service
-
-```bash
-cd nlp-service
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## Environment Modes
-
-The NLP service runs in `demo` mode by default. This keeps the project runnable on normal laptops without downloading the 3B Llama model. For model-based inference, switch to `NLP_MODE=llama`.
-
-```env
-NLP_MODE=demo
-```
-
-For Malaysian Llama inference, set:
-
-```env
-NLP_MODE=llama
-LLM_MODEL_NAME=mesolitica/Malaysian-Llama-3.2-3B-Instruct
-LLM_DEVICE=auto
-LLM_TORCH_DTYPE=auto
-LLM_MAX_INPUT_TOKENS=2048
-LLM_MAX_NEW_TOKENS=256
-LLM_TEMPERATURE=0.0
-```
-
-This uses the instruction-tuned Malaysian Llama model through a strict JSON prompt, so the backend still receives a stable structured output for category, urgency, sentiment, key phrases and department routing.
-
-For Pinecone semantic search, set:
-
-```env
-PINECONE_API_KEY=your_key
-PINECONE_INDEX_NAME=customer-feedback-bge-m3
-PINECONE_NAMESPACE=ticket-interactions
-EMBEDDING_DIMENSION=1024
-```
-
-When Pinecone is not configured, the service returns analysis outputs without vector search.
-
-## Key Design Decisions
-
-### 1. Separate classification and embedding models
-
-Classification/extraction tasks and semantic similarity tasks are separated:
-
-- mesolitica/Malaysian-Llama-3.2-3B-Instruct for prompt-based structured classification of category, urgency, sentiment and key phrases
-- BGE-M3-style multilingual embedding model for Pinecone search and clustering
-
-This is more maintainable than forcing one model to perform all tasks.
-
-### 2. Department routing is rule-based
-
-Departments are mapped from predicted categories because departments are business rules, not purely linguistic classes.
-
-### 3. Every chat turn is auditable
-
-Each user message and model output is stored as one `ticket_interaction`. Admins can validate or correct model outputs later.
-
-### 4. Submitted tickets are read-only
-
-Once a ticket is submitted, the user cannot add more chat messages. However, the ticket name remains editable for usability.
-
-## Main Features
 
 ### Customer
 
-- Signup and login
-- Create a ticket with a ticket name
-- View ticket list
-- Rename ticket
-- Reorder tickets
-- Soft delete tickets
-- Chat with NLP model while ticket is `IN_PROGRESS`
-- Submit ticket
-- View submitted chat history
+```http
+GET    /api/customer/tickets
+POST   /api/customer/tickets
+PATCH  /api/customer/tickets/:ticketId
+DELETE /api/customer/tickets/:ticketId
+GET    /api/customer/tickets/:ticketId/messages
+POST   /api/customer/tickets/:ticketId/messages
+POST   /api/customer/tickets/:ticketId/submit
+```
 
 ### Admin
 
-- View overall dashboard summary
-- View department/status/urgency/sentiment/category statistics
-- View top key phrases
-- Filter tickets by user, status, department or urgency
-- Open user analytics page
-- Review full ticket history
-- Validate or correct model outputs
+```http
+GET    /api/admin/summary
+GET    /api/admin/users
+GET    /api/admin/tickets
+GET    /api/admin/users/:userId/analytics
+GET    /api/admin/tickets/:ticketId/history
+PATCH  /api/admin/interactions/:interactionId/validate
+POST   /api/admin/interactions/:interactionId/reanalyse
+DELETE /api/admin/interactions/:interactionId
+```
 
+## 10. Admin Chat Removal Feature
 
-## Admin Validation Persistence and Dashboard Updates
+Admins can remove individual chat interactions from the validation page:
 
-The admin dashboard includes a backend-persisted human validation workflow for model outputs. This supports human-in-the-loop review of ticket interactions and makes each admin validation auditable.
+```text
+Admin Dashboard
+→ User Analytics
+→ Select Ticket
+→ Ticket History & Validation
+→ Remove Chat
+```
 
-### Backend validation flow
+The frontend shows a confirmation dialog before deletion. The backend endpoint is:
+
+```http
+DELETE /api/admin/interactions/:interactionId
+```
+
+This is an admin-only action. It permanently deletes the selected interaction from `ticket_interactions`. Related records are removed through Prisma/PostgreSQL cascading relations, including:
+
+- `admin_validations`
+- `analysis_runs`
+- `ticket_vectors`
+
+No Prisma schema migration is required for this feature because the existing schema already uses cascading relations from interaction-linked records.
+
+## 11. Human-in-the-Loop Validation
 
 The validation endpoint is:
 
@@ -217,165 +291,191 @@ The validation endpoint is:
 PATCH /api/admin/interactions/:interactionId/validate
 ```
 
-When an admin validates an interaction, the backend writes the result to the `admin_validations` table. If the same admin validates the same interaction again, the existing validation row is updated instead of creating duplicate rows.
+The backend writes validation records into `admin_validations`. If the same admin validates the same interaction again, the existing validation record is updated rather than duplicated.
 
-The response includes:
+Stored validation fields include:
 
-- `validation`
-- `interaction_id`
-- `ticket_id`
-- `is_validated`
-- `validated_at`
+- corrected category
+- corrected urgency
+- corrected sentiment
+- corrected department
+- notes
+- admin ID
+- validation timestamp
 
-The admin summary API also includes a `validation_summary` with:
+## 12. Analysis Retry and Failure Safety
 
-- `total_interactions`
-- `validated_interactions`
-- `pending_interactions`
-- `validation_records`
-
-User-level admin analytics also include per-user validation coverage, and ticket listings include the latest interaction validation status.
-
-### Admin dashboard layout
-
-The main admin dashboard is organised into clearer sections:
-
-- Snapshot
-- Model Output Analytics
-- Users
-- Latest Tickets
-
-The user-level admin analytics page is organised into:
-
-- User Snapshot
-- User-level Model Analytics
-- Tickets
-- Ticket History & Validation
-
-Each interaction shows whether it is still pending review or already validated, along with the validating admin, validation timestamp, and validation notes where available.
-
-### Mark as Validated behaviour
-
-The `Mark as Validated` button now:
-
-- calls the backend validation API
-- persists the validation result in PostgreSQL
-- shows a loading state while the request is in progress
-- refreshes ticket history and user analytics after saving
-- changes to a disabled `Validated` state once saved
-
-No Prisma migration is required for this feature because the project already includes the `AdminValidation` model/table.
-
-To verify persistence directly in PostgreSQL, run:
-
-```sql
-SELECT * FROM admin_validations ORDER BY "validatedAt" DESC LIMIT 10;
-```
-
-## Documentation
-
-- `docs/ARCHITECTURE.md`
-- `docs/API.md`
-- `docs/SEQUENCE_DIAGRAMS.md`
-- `docs/ACTIVITY_DIAGRAMS.md`
-- `docs/MODEL_MIGRATION.md`
-
-## Notes for Further Fine-Tuning
-
-Full LoRA fine-tuning can be done in the future using the scripts in `nlp-service/training/`, while the demo mode allows the complete system flow to be tested immediately.
-
-
-## Industry-Grade Reliability Improvements
-
-This version adds a more production-like reliability layer around NLP analysis and admin review.
-
-### Resilient NLP Analysis
-
-Customer messages are now persisted even when the NLP service is unavailable, slow, or returns an error. Instead of failing the whole ticket-message request, the backend stores the interaction with:
+The backend stores customer messages even if the NLP service fails. Failed analysis is recorded with:
 
 ```text
-analysisStatus = SUCCESS | PENDING | FAILED
-analysisError = error message when analysis fails
+analysisStatus = FAILED
+analysisError = error message
 ```
 
-When analysis fails, the backend uses a safe fallback model output:
-
-```text
-category: General Enquiry
-urgency: Low
-sentiment: Neutral
-department: Customer Service Department
-modelName: analysis-failed-fallback
-```
-
-This keeps the ticketing system usable even when the AI layer is degraded.
-
-### Analysis Run Audit Trail
-
-A new `analysis_runs` table stores each analysis attempt for every ticket interaction. This provides an audit history for:
-
-- successful NLP outputs
-- failed NLP calls
-- retry attempts
-- model name, model version and prompt version
-- raw output/error message
-
-This makes the system easier to debug and more suitable for model comparison and future retraining.
-
-### Admin Retry Workflow
-
-Admins can now retry failed NLP analysis from the user-level admin ticket history page through:
+Admins can retry analysis through:
 
 ```http
 POST /api/admin/interactions/:interactionId/reanalyse
 ```
 
-If the retry succeeds, the interaction is updated with the latest model output. If it fails, the failure is saved in both `ticket_interactions` and `analysis_runs`.
+This supports a more resilient architecture where customer ticket creation is not blocked by temporary NLP service issues.
 
-### Health and Observability
+## 13. Database Models
 
-The backend now exposes a deeper health endpoint:
-
-```http
-GET /api/health
-```
-
-It checks:
-
-- backend availability
-- PostgreSQL connectivity
-- NLP service availability
-- latency per dependency
-
-Every backend response also includes an `x-request-id` header. Error responses include the same request ID, making debugging easier across browser, backend and logs.
-
-### Environment Setup
-
-Each service now includes its own safe `.env.example`:
+Main Prisma models:
 
 ```text
-backend/.env.example
-frontend/.env.example
-nlp-service/.env.example
+User
+Ticket
+TicketInteraction
+AnalysisRun
+AdminValidation
+TicketVector
 ```
 
-Do not commit real `.env` files. Use the examples as templates.
+`TicketInteraction` is the central model for message-level NLP output. Each interaction stores:
 
-### Database Migration
+- user text
+- model JSON output
+- predicted category
+- urgency
+- sentiment
+- department
+- key phrases
+- model name and version
+- prompt version
+- analysis status
+- analysis error
 
-This version adds a Prisma migration:
+## 14. Frontend Pages
 
 ```text
-backend/prisma/migrations/20260601120000_industry_grade_analysis_status/
+/
+login
+signup
+customer dashboard
+admin dashboard
+admin user analytics
 ```
 
-Run:
+The admin user analytics page is the main validation page. It includes:
+
+- user snapshot
+- user-level model analytics
+- ticket list
+- ticket history
+- validation button
+- retry analysis button
+- remove chat button
+
+## 15. Recommended Runtime Modes
+
+### Local Laptop
+
+```env
+NLP_MODE=demo
+```
+
+Use this for normal frontend/backend testing.
+
+### GPU / Colab / RunPod
+
+```env
+NLP_MODE=qwen-lora
+LLM_DEVICE=cuda
+LLM_TORCH_DTYPE=float16
+```
+
+Use this to test the Qwen base model with the LoRA adapter.
+
+## 16. Troubleshooting
+
+### Backend says `DATABASE_URL` missing
+
+Create `backend/.env` from `backend/.env.example`.
+
+### PostgreSQL user denied access
+
+Use your local PostgreSQL username in `DATABASE_URL`, for example:
+
+```env
+DATABASE_URL=postgresql://mackwongyy@localhost:5432/smart_feedback?schema=public
+```
+
+### Frontend says `Failed to fetch`
+
+Make sure:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
+CORS_ORIGIN=http://localhost:3000
+```
+
+Open the app at:
+
+```text
+http://localhost:3000
+```
+
+### NLP service says port 8000 already in use
 
 ```bash
-cd backend
-npx prisma generate
-npx prisma migrate dev
-npm run db:seed
+lsof -ti :8000 | xargs kill -9
 ```
 
-For Docker deployment, `docker compose up --build` now runs `prisma migrate deploy` instead of pushing the schema directly.
+Then restart the service.
+
+### Next.js dependency conflict
+
+Use modern Next.js for the App Router project. The frontend should not use `next@9`.
+
+```bash
+cd frontend
+rm -rf node_modules .next package-lock.json
+npm install
+npm run dev
+```
+
+Node 20 LTS is recommended.
+
+## 17. Security and Git Hygiene
+
+Do not commit:
+
+```text
+backend/.env
+frontend/.env
+frontend/.env.local
+nlp-service/.env
+node_modules/
+.venv/
+.next/
+```
+
+Commit only `.env.example` files.
+
+Rotate any API keys that were accidentally shared or committed.
+
+## 18. Current Implementation Status
+
+Implemented:
+
+- customer ticket workflow
+- admin dashboard
+- user analytics
+- validation persistence
+- retry analysis
+- admin chat removal
+- Qwen model configuration
+- LoRA adapter configuration
+- local demo NLP mode
+- PostgreSQL/Prisma persistence
+- optional Pinecone vector-search configuration
+
+Recommended future enhancements:
+
+- soft-delete/audit table for removed chat interactions
+- semantic graph visualisation
+- RAG analyst panel with cited ticket evidence
+- batch evaluation dashboard
+- production deployment profile

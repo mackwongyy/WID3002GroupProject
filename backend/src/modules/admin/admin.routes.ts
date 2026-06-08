@@ -80,3 +80,12 @@ adminRouter.post("/interactions/:interactionId/reanalyse", async (req, res, next
     next(error);
   }
 });
+
+adminRouter.delete("/interactions/:interactionId", async (req, res, next) => {
+  try {
+    const result = await adminService.deleteInteraction(req.user!.id, req.params.interactionId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+});

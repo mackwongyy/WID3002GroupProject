@@ -16,7 +16,7 @@ flowchart LR
     FE --> API[Node.js Backend API]
     API --> DB[(PostgreSQL)]
     API --> NLP[Python FastAPI NLP Service]
-    NLP --> HF[Malaysian Llama + Embedding Model]
+    NLP --> HF[Qwen3 + LoRA + Embedding Model]
     NLP --> VDB[(Pinecone Vector DB)]
 ```
 
@@ -68,7 +68,7 @@ The NLP service is a Python FastAPI application responsible for:
 The service supports three modes:
 
 - `demo`: deterministic heuristic outputs for quick testing
-- `llama` / `malaysian-llama`: prompt-based structured inference using `mesolitica/Malaysian-Llama-3.2-3B-Instruct`
+- `qwen` / `qwen-lora`: prompt-based structured inference using `Qwen/Qwen3-1.7B`; `qwen-lora` attaches `jieshengchai/qwen3-malaysia-cs-lora-5000-v2`
 - `sequence-classifier`: optional legacy/future supervised HuggingFace classifiers
 
 ### PostgreSQL
@@ -146,9 +146,9 @@ Admin corrections are stored separately from original model outputs. This preser
 
 PostgreSQL remains the source of truth. Pinecone stores embeddings and metadata for semantic similarity only.
 
-### Malaysian Llama as structured classifier
+### Qwen3 + LoRA as structured classifier
 
-The runtime classifier now uses `mesolitica/Malaysian-Llama-3.2-3B-Instruct` in `NLP_MODE=llama`. Since the model is an instruction-tuned causal language model rather than a classification head, the service constrains it through a strict JSON prompt. The backend therefore receives the same stable fields: category, urgency, sentiment, key phrases and department.
+The runtime classifier now uses `Qwen/Qwen3-1.7B` with `jieshengchai/qwen3-malaysia-cs-lora-5000-v2` in `NLP_MODE=qwen-lora`. Since the model is an instruction-tuned causal language model rather than a classification head, the service constrains it through a strict JSON prompt and disables Qwen3 thinking mode for cleaner JSON output. The backend therefore receives the same stable fields: category, urgency, sentiment, key phrases and department.
 
 ### Department routing as business logic
 
