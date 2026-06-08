@@ -1,7 +1,8 @@
-"""LoRA fine-tuning script for mesolitica/Malaysian-Llama-3.2-3B-Instruct.
+"""LoRA fine-tuning script for Qwen/Qwen3-1.7B.
 
-This script prepares the Malaysian Llama model to return the same structured JSON
-schema used by the runtime NLP service.
+This script prepares the Qwen3 model to return the same structured JSON
+schema used by the runtime NLP service. The current runtime adapter is
+`jieshengchai/qwen3-malaysia-cs-lora-5000-v2`.
 
 Expected CSV columns by default:
     text, category, urgency, sentiment, key_phrases
@@ -10,7 +11,7 @@ Example:
     python training/train_classifier.py \
         --train_csv data/labelled/train.csv \
         --eval_csv data/labelled/eval.csv \
-        --output_dir models/malaysian-llama-feedback-lora
+        --output_dir models/qwen3-malaysia-cs-lora
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ ALLOWED_SENTIMENTS = ["Positive", "Neutral", "Negative"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base_model", default="mesolitica/Malaysian-Llama-3.2-3B-Instruct")
+    parser.add_argument("--base_model", default="Qwen/Qwen3-1.7B")
     parser.add_argument("--train_csv", required=True)
     parser.add_argument("--eval_csv", required=True)
     parser.add_argument("--text_column", default="text")
@@ -92,11 +93,11 @@ def main() -> None:
     args = parse_args()
     dataset = load_dataset("csv", data_files={"train": args.train_csv, "eval": args.eval_csv})
 
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(args.base_model, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(args.base_model)
     model.config.use_cache = False
 
     lora_config = LoraConfig(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
@@ -16,6 +15,9 @@ SYSTEM_PROMPT = (
     "Account Issue, Delivery Issue, Product Issue, Service Complaint, General Enquiry. "
     "Use urgency from: Low, Medium, High. "
     "Use sentiment from: Positive, Neutral, Negative. "
+    "For complaints, anger, bad attitude, rude service, dissatisfaction, or words like "
+    "投诉, 生气, 不满意, 态度不好, marah, angry, classify sentiment as Negative. "
+    "Do not include explanations, markdown, or thinking text outside JSON."
 )
 
 URGENCY_COLOUR = {
@@ -30,17 +32,29 @@ DEFAULT_CONFIDENCE = {
     "sentiment": 0.80,
 }
 
+CATEGORY_TO_DEPARTMENT = {
+    "Payment Issue": "Finance Department",
+    "Refund Issue": "Finance Department",
+    "Technical Issue": "Technical Support Department",
+    "Account Access": "Customer Service Department",
+    "Account Issue": "Customer Service Department",
+    "Delivery Issue": "Logistics Department",
+    "Product Issue": "Product Department",
+    "Service Complaint": "Customer Service Department",
+    "General Enquiry": "Customer Service Department",
+}
+
 
 class DemoClassifier:
     """Lightweight local fallback classifier.
 
     This mode is safe for local Mac development and keeps the full app working
-    without loading the large Malaysian Llama model.
+    without loading the Qwen base model or LoRA adapter.
     """
 
     model_name = "demo-rules"
-    model_version = "demo-v2"
-    prompt_version = "demo-rules-v2"
+    model_version = "demo-v3-qwen-compatible"
+    prompt_version = "demo-rules-v3"
 
     def analyse(self, text: str) -> dict[str, Any]:
         lower = text.lower()
@@ -70,36 +84,29 @@ class DemoClassifier:
         if any(k in lower for k in ["投诉", "投訴", "complaint", "complain", "attitude", "态度", "態度", "rude", "service", "客服"]):
             category = "Service Complaint"
             urgency = "Medium" if sentiment != "Positive" else "Low"
-            department = "Customer Service Department"
         elif any(k in lower for k in ["refund", "退款", "bayaran balik"]):
             category = "Refund Issue"
             urgency = "High" if sentiment == "Negative" else "Medium"
-            department = "Finance Department"
         elif any(k in lower for k in ["扣钱", "扣了", "charged", "payment", "付款", "bayar", "duit", "deducted"]):
             category = "Payment Issue"
             urgency = "High" if sentiment == "Negative" else "Medium"
-            department = "Finance Department"
         elif any(k in lower for k in ["login", "crash", "error", "bug", "otp", "cannot access", "app"]):
             category = "Technical Issue"
             urgency = "High" if sentiment == "Negative" else "Medium"
-            department = "Technical Support Department"
         elif any(k in lower for k in ["parcel", "delivery", "rider", "包裹", "送", "delivered"]):
             category = "Delivery Issue"
             urgency = "High" if sentiment == "Negative" else "Medium"
-            department = "Logistics Department"
         elif any(k in lower for k in ["product", "item", "barang", "产品", "商品", "faulty", "rosak"]):
             category = "Product Issue"
             urgency = "Medium"
-            department = "Product Department"
         elif any(k in lower for k in ["account", "akaun", "账号", "帳號", "password", "密码"]):
             category = "Account Issue"
             urgency = "High" if sentiment == "Negative" else "Medium"
-            department = "Customer Service Department"
         else:
             category = "General Enquiry"
             urgency = "Low"
-            department = "Customer Service Department"
 
+        department = CATEGORY_TO_DEPARTMENT.get(category, "Customer Service Department")
         return build_response(
             category=category,
             urgency=urgency,
@@ -113,11 +120,14 @@ class DemoClassifier:
         )
 
 
-class MalaysianLlamaClassifier:
-    """Base Malaysian Llama classifier without adapter.
+class QwenClassifier:
+    """Qwen3 base classifier without adapter.
+
+    Runtime base model:
+    - Qwen/Qwen3-1.7B
 
     Use only in a GPU/server environment unless you are intentionally testing
-    very slow local inference.
+    slow local inference.
     """
 
     def __init__(self) -> None:
@@ -125,14 +135,10 @@ class MalaysianLlamaClassifier:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self.model_name = settings.llm_model_name
-        self.model_version = "base-llama-v1"
-        self.prompt_version = "malaysian-feedback-json-v1"
+        self.model_version = "qwen3-1.7b-base-v1"
+        self.prompt_version = "qwen3-malaysian-feedback-json-v1"
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            settings.llm_model_name,
-            trust_remote_code=True,
-        )
-
+        self.tokenizer = AutoTokenizer.from_pretrained(settings.llm_model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -143,13 +149,30 @@ class MalaysianLlamaClassifier:
             settings.llm_model_name,
             torch_dtype=torch_dtype,
             device_map=device_map,
-            trust_remote_code=True,
             low_cpu_mem_usage=True,
         )
         self.model.eval()
 
     def analyse(self, text: str) -> dict[str, Any]:
         return self._analyse_with_model(text)
+
+    def _apply_chat_template(self, messages: list[dict[str, str]]) -> str:
+        try:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=settings.llm_enable_thinking,
+            )
+        except TypeError:
+            # Older tokenizer versions may not expose enable_thinking. The
+            # project requirements now require transformers >= 4.51.0, but this
+            # fallback keeps the service safer if a user has a stale environment.
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
 
     def _analyse_with_model(self, text: str) -> dict[str, Any]:
         import torch
@@ -159,12 +182,7 @@ class MalaysianLlamaClassifier:
             {"role": "user", "content": text},
         ]
 
-        prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-
+        prompt = self._apply_chat_template(messages)
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
@@ -175,21 +193,31 @@ class MalaysianLlamaClassifier:
         device = next(self.model.parameters()).device
         inputs = {key: value.to(device) for key, value in inputs.items()}
 
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=settings.llm_max_new_tokens,
-                temperature=settings.llm_temperature,
-                do_sample=False,
-                pad_token_id=self.tokenizer.eos_token_id,
+        do_sample = settings.llm_temperature > 0
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": settings.llm_max_new_tokens,
+            "do_sample": do_sample,
+            "pad_token_id": self.tokenizer.eos_token_id,
+        }
+        if do_sample:
+            generation_kwargs.update(
+                {
+                    "temperature": settings.llm_temperature,
+                    "top_p": 0.8,
+                    "top_k": 20,
+                }
             )
+
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, **generation_kwargs)
 
         generated = self.tokenizer.decode(
             outputs[0][inputs["input_ids"].shape[-1]:],
             skip_special_tokens=True,
         ).strip()
 
-        parsed = parse_json_output(generated)
+        cleaned = strip_thinking_text(generated)
+        parsed = parse_json_output(cleaned)
         parsed = normalise_model_output(parsed, text)
 
         return build_response(
@@ -206,36 +234,35 @@ class MalaysianLlamaClassifier:
         )
 
 
-class MalaysianLlamaLoraClassifier(MalaysianLlamaClassifier):
-    """Malaysian Llama + PEFT LoRA adapter classifier.
+class QwenLoraClassifier(QwenClassifier):
+    """Qwen3 + PEFT LoRA adapter classifier.
 
-    Expected adapter:
-    - mackwongyy/malaysian-feedback-lora-5k-data
+    Runtime base model:
+    - Qwen/Qwen3-1.7B
 
-    This class deliberately avoids bitsandbytes by default. For Colab/T4 or
-    GPU servers, FP16 loading is much more stable for inference than the earlier
-    4-bit path that triggered bitsandbytes/CUDA setup issues.
+    Runtime LoRA adapter:
+    - jieshengchai/qwen3-malaysia-cs-lora-5000-v2
     """
 
     def __init__(self) -> None:
         if not settings.llm_adapter_path:
-            raise ValueError(
-                "LLM_ADAPTER_PATH is required when NLP_MODE=malaysian-llama-lora."
-            )
+            raise ValueError("LLM_ADAPTER_PATH is required when NLP_MODE=qwen-lora.")
 
         super().__init__()
 
         from peft import PeftModel
 
-        self.model = PeftModel.from_pretrained(
-            self.model,
-            settings.llm_adapter_path,
-        )
+        self.model = PeftModel.from_pretrained(self.model, settings.llm_adapter_path)
         self.model.eval()
 
         self.model_name = f"{settings.llm_model_name}+{settings.llm_adapter_path}"
-        self.model_version = "lora-adapter-5k-data-v1"
-        self.prompt_version = "malaysian-feedback-json-lora-5k-v1"
+        self.model_version = "qwen3-malaysia-cs-lora-5000-v2"
+        self.prompt_version = "qwen3-malaysian-feedback-json-lora-v2"
+
+
+# Backwards-compatible aliases so old imports do not immediately fail.
+MalaysianLlamaClassifier = QwenClassifier
+MalaysianLlamaLoraClassifier = QwenLoraClassifier
 
 
 class EmbeddingModel:
@@ -269,11 +296,18 @@ def get_classifier():
     if mode == "demo":
         return DemoClassifier()
 
-    if mode in {"malaysian-llama-lora", "llama-lora", "lora"}:
-        return MalaysianLlamaLoraClassifier()
+    if mode in {"qwen-lora", "qwen3-lora", "qwen3-malaysia-cs-lora", "lora"}:
+        return QwenLoraClassifier()
 
+    if mode in {"qwen", "qwen3", "qwen-base"}:
+        return QwenClassifier()
+
+    # Backwards-compatible handling for old env values. These now map to the
+    # Qwen runtime because the project has migrated away from Malaysian Llama.
+    if mode in {"malaysian-llama-lora", "llama-lora"}:
+        return QwenLoraClassifier()
     if mode in {"malaysian-llama", "llama"}:
-        return MalaysianLlamaClassifier()
+        return QwenClassifier()
 
     return DemoClassifier()
 
@@ -297,7 +331,6 @@ def resolve_torch_dtype(dtype_setting: str):
     if dtype in {"float32", "fp32"}:
         return torch.float32
 
-    # Stable default: GPU uses fp16, CPU uses fp32.
     return torch.float16 if torch.cuda.is_available() else torch.float32
 
 
@@ -310,7 +343,7 @@ def resolve_device_map(device_setting: str):
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "LLM_DEVICE=cuda was requested, but CUDA is not available. "
-                "Use NLP_MODE=demo locally, or run Malaysian Llama + LoRA on Colab/RunPod/GPU."
+                "Use NLP_MODE=demo locally, or run Qwen + LoRA on Colab/RunPod/GPU."
             )
         return {"": 0}
 
@@ -358,6 +391,12 @@ def build_response(
     return response
 
 
+def strip_thinking_text(raw: str) -> str:
+    # Qwen3 may produce <think>...</think> if thinking mode is enabled or if an
+    # older runtime ignores enable_thinking=False. Remove it before JSON parsing.
+    return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+
 def parse_json_output(raw: str) -> dict[str, Any]:
     try:
         return json.loads(raw)
@@ -397,7 +436,7 @@ def normalise_model_output(result: dict[str, Any], text: str) -> dict[str, Any]:
     category = result.get("category", "General Enquiry")
     urgency = result.get("urgency", "Low")
     sentiment = result.get("sentiment", "Neutral")
-    department = result.get("department", "Customer Service Department")
+    department = result.get("department") or CATEGORY_TO_DEPARTMENT.get(category, "Customer Service Department")
     key_phrases = result.get("key_phrases", extract_key_phrases(text))
 
     if category not in allowed_categories:

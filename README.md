@@ -289,6 +289,33 @@ Full LoRA fine-tuning can be done in the future using the scripts in `nlp-servic
 
 This version adds a more production-like reliability layer around NLP analysis and admin review.
 
+### Backend
+- Added request ID middleware and request ID propagation in error responses.
+- Added `/api/health` for database and NLP-service dependency checks.
+- Added `NLP_TIMEOUT_MS` configuration and timeout protection for NLP calls.
+- Added resilient NLP fallback behaviour so customer messages are saved even if NLP fails.
+- Added `analysisStatus` and `analysisError` fields to ticket interactions.
+- Added `AnalysisRun` audit table for model output history and retry attempts.
+- Added admin retry endpoint: `POST /api/admin/interactions/:interactionId/reanalyse`.
+- Extended admin summary/user analytics with analysis-status breakdown.
+
+### Frontend
+- Added analysis-status visibility for customer ticket history.
+- Added analysis-status and analysis-error visibility in admin ticket review.
+- Added Retry Analysis button for failed NLP analysis.
+- Added analysis-status counts to admin dashboards.
+
+### DevOps / Setup
+- Added service-level `.env.example` files.
+- Added Prisma migration for analysis-status and analysis-runs.
+- Updated Docker Compose to use `prisma migrate deploy`.
+- Added backend environment validation script: `npm run check:env`.
+
+### NLP service
+- Made `/health` lightweight through lazy pipeline loading.
+- Skips embedding model loading when Pinecone is not configured.
+- Keeps vector search failure from breaking analysis output.
+
 ### Resilient NLP Analysis
 
 Customer messages are now persisted even when the NLP service is unavailable, slow, or returns an error. Instead of failing the whole ticket-message request, the backend stores the interaction with:
@@ -366,7 +393,7 @@ Do not commit real `.env` files. Use the examples as templates.
 This version adds a Prisma migration:
 
 ```text
-backend/prisma/migrations/20260601120000_industry_grade_analysis_status/
+backend/prisma/migrations/20260601120000_iteration/
 ```
 
 Run:
