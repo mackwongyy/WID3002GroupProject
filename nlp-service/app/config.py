@@ -11,9 +11,6 @@ class Settings(BaseSettings):
 
     nlp_mode: str = Field(default="demo", alias="NLP_MODE")
 
-    # UPDATED - Qwen migration defaults.
-    # Local development should keep NLP_MODE=demo.
-    # GPU/Colab/RunPod inference can use NLP_MODE=qwen-lora.
     llm_model_name: str = Field(
         default="Qwen/Qwen3-1.7B",
         alias="LLM_MODEL_NAME",

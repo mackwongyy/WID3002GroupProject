@@ -467,3 +467,39 @@ export async function retryAnalysis(interactionId: string) {
     };
   }
 }
+
+
+export async function deleteInteraction(adminId: string, interactionId: string) {
+  const interaction = await prisma.ticketInteraction.findUnique({
+    where: { id: interactionId },
+    include: {
+      ticket: { select: { id: true, displayId: true, ticketName: true, userId: true, deletedAt: true } },
+      validations: { select: { id: true } },
+      analysisRuns: { select: { id: true } },
+      vector: { select: { id: true } }
+    }
+  });
+
+  if (!interaction || interaction.ticket.deletedAt) {
+    throw new HttpError(404, "INTERACTION_NOT_FOUND", "Interaction was not found.");
+  }
+
+  await prisma.ticketInteraction.delete({
+    where: { id: interactionId }
+  });
+
+  return {
+    deleted: true,
+    interaction_id: interactionId,
+    ticket_id: interaction.ticketId,
+    ticket_display_id: interaction.ticket.displayId,
+    step_number: interaction.stepNumber,
+    deleted_by_admin_id: adminId,
+    deleted_at: new Date(),
+    removed_related_records: {
+      validations: interaction.validations.length,
+      analysis_runs: interaction.analysisRuns.length,
+      vector: interaction.vector ? 1 : 0
+    }
+  };
+}
